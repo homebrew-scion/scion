@@ -59,6 +59,14 @@ jobs:
 
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+          # core-base must exist in the registry before common images can build
+          bash image-build/scripts/build-images.sh \
+            --registry ghcr.io/homebrew-scion \
+            --target core-base \
+            --tag "v${VERSION}" \
+            --platform all \
+            --push
+
           bash image-build/scripts/build-images.sh \
             --registry ghcr.io/homebrew-scion \
             --target common \
@@ -67,7 +75,7 @@ jobs:
             --push
 
           if [ "$IS_PRERELEASE" != "true" ]; then
-            IMAGES="scion-base scion-claude scion-gemini scion-opencode scion-codex scion-hub"
+            IMAGES="core-base scion-base scion-claude scion-gemini scion-opencode scion-codex scion-hub"
             for img in $IMAGES; do
               docker buildx imagetools create \
                 --tag "ghcr.io/homebrew-scion/${img}:latest" \
