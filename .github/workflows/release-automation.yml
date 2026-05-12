@@ -5,6 +5,10 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   detect-release:
     runs-on: ubuntu-latest
@@ -14,11 +18,29 @@ jobs:
     steps:
       - name: Check for new upstream release
         id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # TODO: Query GoogleCloudPlatform/scion releases via gh api
-          # TODO: Compare latest release version against current formula version
-          # TODO: Set outputs: new_version, is_prerelease
-          echo "Not yet implemented"
+          LATEST=$(gh api repos/GoogleCloudPlatform/scion/releases/latest --jq '.tag_name')
+          IS_PRERELEASE=$(gh api repos/GoogleCloudPlatform/scion/releases/latest --jq '.prerelease')
+
+          # Strip leading 'v' for version comparison
+          LATEST_VERSION="${LATEST#v}"
+
+          # Fetch current formula version from the tap repo
+          FORMULA_VERSION=$(gh api repos/homebrew-scion/homebrew-scion/contents/Formula/scion.rb \
+            --jq '.content' | base64 -d | grep -oP '^\s*version\s+"\K[^"]+')
+
+          echo "Upstream latest: $LATEST_VERSION (prerelease: $IS_PRERELEASE)"
+          echo "Formula version: $FORMULA_VERSION"
+
+          if [ "$LATEST_VERSION" != "$FORMULA_VERSION" ]; then
+            echo "new_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          else
+            echo "No new version detected"
+            echo "new_version=" >> "$GITHUB_OUTPUT"
+          fi
 
   build-images:
     needs: detect-release
@@ -29,32 +51,115 @@ jobs:
 
       - name: Sync fork from upstream
         run: |
-          # TODO: Fetch upstream tags and checkout the new release tag
-          echo "Not yet implemented"
+          VERSION="${{ needs.detect-release.outputs.new_version }}"
+          git remote add upstream https://github.com/GoogleCloudPlatform/scion.git || true
+          git fetch upstream "v${VERSION}"
+          git checkout "v${VERSION}"
 
       - name: Build and push container images
         run: |
-          # TODO: Log in to ghcr.io
-          # TODO: Run image-build/scripts/build-images.sh --registry ghcr.io/homebrew-scion --target common --tag <version> --platform all --push
-          # TODO: If stable release, retag images as :latest using docker buildx imagetools create
-          echo "Not yet implemented"
+          VERSION="${{ needs.detect-release.outputs.new_version }}"
+          IS_PRERELEASE="${{ needs.detect-release.outputs.is_prerelease }}"
+
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          bash image-build/scripts/build-images.sh \
+            --registry ghcr.io/homebrew-scion \
+            --target common \
+            --tag "v${VERSION}" \
+            --platform all \
+            --push
+
+          if [ "$IS_PRERELEASE" != "true" ]; then
+            IMAGES="scion-base scion-claude scion-gemini scion-opencode scion-codex scion-hub"
+            for img in $IMAGES; do
+              docker buildx imagetools create \
+                --tag "ghcr.io/homebrew-scion/${img}:latest" \
+                "ghcr.io/homebrew-scion/${img}:v${VERSION}"
+            done
+          fi
 
   update-formula:
-    needs: build-images
+    needs: [detect-release, build-images]
     if: needs.detect-release.outputs.is_prerelease != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download release tarballs and compute checksums
+        id: checksums
         run: |
-          # TODO: Download all 4 platform tarballs from the GitHub release
-          # TODO: Compute SHA256 checksums for each tarball
-          echo "Not yet implemented"
+          VERSION="${{ needs.detect-release.outputs.new_version }}"
+          BASE_URL="https://github.com/GoogleCloudPlatform/scion/releases/download/v${VERSION}"
+
+          for platform in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            curl -fsSL -o "scion-${platform}.tar.gz" "${BASE_URL}/scion-${platform}.tar.gz"
+            SHA=$(sha256sum "scion-${platform}.tar.gz" | awk '{print $1}')
+            echo "sha256_${platform//-/_}=${SHA}" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Update Homebrew formula
-        run: |
-          # TODO: Clone homebrew-scion/homebrew-scion using HOMEBREW_TAP_TOKEN
-          # TODO: Update version and SHA256 values in Formula/scion.rb
-          # TODO: Commit and push the updated formula
-          echo "Not yet implemented"
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ needs.detect-release.outputs.new_version }}"
+
+          git clone "https://oauth2:${HOMEBREW_TAP_TOKEN}@github.com/homebrew-scion/homebrew-scion.git"
+          cd homebrew-scion
+
+          FORMULA="Formula/scion.rb"
+
+          # Update version
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA"
+
+          # Update SHA256 values in platform-specific blocks
+          # The formula has nested on_macos/on_linux > on_intel/on_arm blocks
+          # We use awk to find and replace sha256 in each block by context
+          python3 - "$FORMULA" \
+            "${{ steps.checksums.outputs.sha256_darwin_amd64 }}" \
+            "${{ steps.checksums.outputs.sha256_darwin_arm64 }}" \
+            "${{ steps.checksums.outputs.sha256_linux_amd64 }}" \
+            "${{ steps.checksums.outputs.sha256_linux_arm64 }}" <<'PYEOF'
+          import sys
+
+          formula_path = sys.argv[1]
+          shas = {
+              'darwin-amd64': sys.argv[2],
+              'darwin-arm64': sys.argv[3],
+              'linux-amd64': sys.argv[4],
+              'linux-arm64': sys.argv[5],
+          }
+
+          with open(formula_path, 'r') as f:
+              content = f.read()
+
+          lines = content.split('\n')
+          result = []
+          os_ctx = None
+          arch_ctx = None
+
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith('on_macos'):
+                  os_ctx = 'darwin'
+              elif stripped.startswith('on_linux'):
+                  os_ctx = 'linux'
+              elif stripped.startswith('on_intel'):
+                  arch_ctx = 'amd64'
+              elif stripped.startswith('on_arm'):
+                  arch_ctx = 'arm64'
+
+              if stripped.startswith('sha256') and os_ctx and arch_ctx:
+                  key = f"{os_ctx}-{arch_ctx}"
+                  if key in shas:
+                      indent = line[:len(line) - len(line.lstrip())]
+                      line = f'{indent}sha256 "{shas[key]}"'
+
+              result.append(line)
+
+          with open(formula_path, 'w') as f:
+              f.write('\n'.join(result))
+          PYEOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: update formula to v${VERSION}"
+          git push

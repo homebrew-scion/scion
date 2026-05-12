@@ -5,6 +5,10 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-preview-images:
     runs-on: ubuntu-latest
@@ -13,11 +17,16 @@ jobs:
 
       - name: Sync fork from upstream main
         run: |
-          # TODO: Fetch latest upstream main and reset to it
-          echo "Not yet implemented"
+          git remote add upstream https://github.com/GoogleCloudPlatform/scion.git || true
+          git fetch upstream main
+          git reset --hard upstream/main
 
       - name: Build and push preview images
         run: |
-          # TODO: Log in to ghcr.io
-          # TODO: Run image-build/scripts/build-images.sh --registry ghcr.io/homebrew-scion --target common --tag preview --platform all --push
-          echo "Not yet implemented"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          bash image-build/scripts/build-images.sh \
+            --registry ghcr.io/homebrew-scion \
+            --target common \
+            --tag preview \
+            --platform all \
+            --push
