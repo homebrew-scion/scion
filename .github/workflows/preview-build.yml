@@ -1,0 +1,23 @@
+name: Preview Build
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  build-preview-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync fork from upstream main
+        run: |
+          # TODO: Fetch latest upstream main and reset to it
+          echo "Not yet implemented"
+
+      - name: Build and push preview images
+        run: |
+          # TODO: Log in to ghcr.io
+          # TODO: Run image-build/scripts/build-images.sh --registry ghcr.io/homebrew-scion --target common --tag preview --platform all --push
+          echo "Not yet implemented"
