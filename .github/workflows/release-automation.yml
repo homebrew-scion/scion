@@ -48,12 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Checkout release tag
-        run: |
-          VERSION="${{ needs.detect-release.outputs.new_version }}"
-          git fetch origin "v${VERSION}"
-          git checkout "v${VERSION}"
+        with:
+          ref: "v${{ needs.detect-release.outputs.new_version }}"
+          fetch-depth: 0
 
       - name: Build and push container images
         run: |
