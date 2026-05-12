@@ -21,8 +21,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST=$(gh api repos/GoogleCloudPlatform/scion/releases/latest --jq '.tag_name')
-          IS_PRERELEASE=$(gh api repos/GoogleCloudPlatform/scion/releases/latest --jq '.prerelease')
+          LATEST=$(gh api repos/homebrew-scion/scion/releases/latest --jq '.tag_name')
+          IS_PRERELEASE=$(gh api repos/homebrew-scion/scion/releases/latest --jq '.prerelease')
 
           # Strip leading 'v' for version comparison
           LATEST_VERSION="${LATEST#v}"
@@ -49,11 +49,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync fork from upstream
+      - name: Checkout release tag
         run: |
           VERSION="${{ needs.detect-release.outputs.new_version }}"
-          git remote add upstream https://github.com/GoogleCloudPlatform/scion.git || true
-          git fetch upstream "v${VERSION}"
+          git fetch origin "v${VERSION}"
           git checkout "v${VERSION}"
 
       - name: Build and push container images
@@ -88,7 +87,7 @@ jobs:
         id: checksums
         run: |
           VERSION="${{ needs.detect-release.outputs.new_version }}"
-          BASE_URL="https://github.com/GoogleCloudPlatform/scion/releases/download/v${VERSION}"
+          BASE_URL="https://github.com/homebrew-scion/scion/releases/download/v${VERSION}"
 
           for platform in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
             curl -fsSL -o "scion-${platform}.tar.gz" "${BASE_URL}/scion-${platform}.tar.gz"
