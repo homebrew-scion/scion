@@ -737,12 +737,22 @@ func startAgentViaHub(hubCtx *HubContext, agentName, task string, resume bool, i
 		util.Debugf("[auth]   cloudProject=%q, cloudRegion=%q", localAuth.GoogleCloudProject, localAuth.GoogleCloudRegion)
 	}
 
-	// Detect non-git project for workspace bootstrap
+	// Detect non-git project for workspace bootstrap.
+	// Only scan when absolutely necessary — CollectFiles walks the entire
+	// project directory and SHA-256 hashes every file, which can take tens
+	// of seconds on large workspaces.
 	var workspaceFiles []transfer.FileInfo
 	if hubCtx.ProjectPath != "" && !hubCtx.IsGlobal {
 		projectDir := filepath.Dir(hubCtx.ProjectPath) // parent of .scion
 		if _, statErr := os.Stat(projectDir); statErr == nil && !util.IsGitRepoDir(projectDir) {
+			if debugMode {
+				util.Debugf("[workspace-scan] non-git project detected at %s, collecting files...", projectDir)
+			}
+			scanStart := time.Now()
 			files, err := transfer.CollectFiles(projectDir, transfer.DefaultExcludePatterns)
+			if debugMode {
+				util.Debugf("[workspace-scan] collected %d files in %s", len(files), time.Since(scanStart))
+			}
 			if err != nil {
 				return fmt.Errorf("failed to collect workspace files: %w", err)
 			}
@@ -760,9 +770,13 @@ func startAgentViaHub(hubCtx *HubContext, agentName, task string, resume bool, i
 	// resumes the session. This check is best-effort — if it fails (agent
 	// doesn't exist yet), we fall through to "Starting".
 	if !resume {
+		suspendCheckStart := time.Now()
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		existing, getErr := hubCtx.Client.ProjectAgents(projectID).Get(checkCtx, agentName)
 		checkCancel()
+		if debugMode {
+			util.Debugf("[startup] suspend check completed in %s (err=%v)", time.Since(suspendCheckStart), getErr)
+		}
 		if getErr == nil && existing != nil && existing.Phase == string(state.PhaseSuspended) {
 			resume = true
 			req.Resume = true
