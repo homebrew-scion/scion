@@ -65,8 +65,6 @@ func (HarnessConfig) Fields() []ent.Field {
 			Optional(),
 		field.String("files").
 			Optional(),
-		field.Bool("locked").
-			Default(false),
 		field.Enum("status").
 			Values("pending", "active", "archived").
 			Default("active"),
@@ -90,7 +88,7 @@ func (HarnessConfig) Fields() []ent.Field {
 // Indexes of the HarnessConfig.
 func (HarnessConfig) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("slug", "scope"),
+		index.Fields("slug", "scope", "scope_id").Unique(),
 		index.Fields("harness"),
 		index.Fields("status"),
 		index.Fields("content_hash"),
