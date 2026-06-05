@@ -230,6 +230,10 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 			log.Fatalf("Hub server failed to start: %v", hubInitErr)
 		}
 
+		// Wire command bus for cross-node dispatch (B2-4).
+		cmdBus := newCommandBus(ctx, cfg, hubSrv)
+		hubSrv.SetCommandBus(cmdBus)
+
 		if !enableWeb {
 			// Hub runs its own HTTP server (standalone mode).
 			eventPub := newEventPublisher(ctx, cfg)
@@ -1081,6 +1085,29 @@ func newEventPublisher(ctx context.Context, cfg *config.GlobalConfig) hub.EventP
 		return pub
 	}
 	return hub.NewChannelEventPublisher()
+}
+
+// newCommandBus selects the command bus backend. With Postgres it returns a
+// PostgresCommandBus (LISTEN/NOTIFY on scion_broker_cmd); otherwise it returns
+// a no-op bus (single-process SQLite always owns all brokers locally).
+func newCommandBus(ctx context.Context, cfg *config.GlobalConfig, hubSrv *hub.Server) hub.CommandBus {
+	if !strings.EqualFold(cfg.Database.Driver, "postgres") {
+		return hub.NoopCommandBus{}
+	}
+	ownsLocally := func(brokerID string) bool {
+		mgr := hubSrv.GetControlChannelManager()
+		if mgr == nil {
+			return false
+		}
+		return mgr.IsConnected(brokerID)
+	}
+	bus, err := hub.NewPostgresCommandBus(ctx, cfg.Database.URL, ownsLocally, hubSrv.ReconcileBroker, logging.Subsystem("hub.commandbus"))
+	if err != nil {
+		log.Printf("WARNING: failed to start Postgres command bus (%v); falling back to no-op. Cross-replica dispatch signals will not work.", err)
+		return hub.NoopCommandBus{}
+	}
+	log.Printf("Using Postgres command bus on channel scion_broker_cmd")
+	return bus
 }
 
 // initWebServer creates and configures the Web server. The provided context is

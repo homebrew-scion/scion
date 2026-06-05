@@ -100,7 +100,11 @@ func runServerMigrate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("opening source sqlite: %w", err)
 	}
-	defer src.Close()
+	defer func() {
+		if src != nil {
+			_ = src.Close()
+		}
+	}()
 
 	fmt.Fprintln(out, "Opening destination PostgreSQL")
 	dst, err := entc.OpenPostgres(dstDSN, entc.PoolConfig{MaxOpenConns: 10, MaxIdleConns: 5})
@@ -133,6 +137,8 @@ func runServerMigrate(cmd *cobra.Command, _ []string) error {
 		len(report.Entities), total, report.ChildGroupEdgs)
 
 	if migrateDropSource {
+		_ = src.Close()
+		src = nil
 		fmt.Fprintf(out, "Dropping source SQLite file: %s\n", srcPath)
 		if err := dropSQLiteFile(srcPath); err != nil {
 			return fmt.Errorf("dropping source: %w", err)
@@ -164,7 +170,6 @@ func parseSQLiteSourceDSN(raw string) (dsn, path string, err error) {
 		path = strings.TrimPrefix(raw, "sqlite:")
 	case strings.HasPrefix(raw, "file://"):
 		path = strings.TrimPrefix(raw, "file://")
-		// file:///abs -> "/abs"; the third slash begins the absolute path.
 		if i := strings.IndexByte(path, '?'); i >= 0 {
 			path = path[:i]
 		}

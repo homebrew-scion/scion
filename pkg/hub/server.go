@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/hub/githubapp"
 	"github.com/GoogleCloudPlatform/scion/pkg/messages"
 	"github.com/GoogleCloudPlatform/scion/pkg/observability/dbmetrics"
+	"github.com/GoogleCloudPlatform/scion/pkg/observability/dispatchmetrics"
 	"github.com/GoogleCloudPlatform/scion/pkg/secret"
 	"github.com/GoogleCloudPlatform/scion/pkg/storage"
 	"github.com/GoogleCloudPlatform/scion/pkg/store"
@@ -77,6 +79,14 @@ type ServerConfig struct {
 	// UserTokenConfig holds configuration for user JWT tokens.
 	// If SigningKey is empty, a random key is generated.
 	UserTokenConfig UserTokenConfig
+	// SharedSigningSecret is the deployment-wide secret (the same value every
+	// replica receives via --session-secret / SESSION_SECRET) from which the
+	// agent and user JWT signing keys are derived deterministically. When set,
+	// every replica derives identical signing keys regardless of its
+	// host-derived HubID, so a JWT minted by one replica validates on any
+	// other replica behind the load balancer. When empty, signing keys fall
+	// back to per-hub storage in the secret backend / store.
+	SharedSigningSecret string
 	// TrustedProxies is a list of trusted proxy IPs/CIDRs for forwarded headers.
 	TrustedProxies []string
 	// Debug enables verbose debug logging.
@@ -261,7 +271,7 @@ type RuntimeBrokerClient interface {
 	// brokerID is used for HMAC authentication lookup.
 	// task is an optional task string to pass to the agent on start.
 	// projectPath is the local filesystem path to the project on the broker.
-	// projectSlug is the project slug for hub-managed projects (no local provider path).
+	// projectSlug is the project slug for hub-native projects (no local provider path).
 	// resolvedEnv contains environment variables resolved from Hub storage (API keys, etc.).
 	// harnessConfig is the harness config name to use for the agent (e.g. "claude", "gemini").
 	// resolvedSecrets contains type-aware secrets (including file-type) for auth resolution.
@@ -317,7 +327,7 @@ type RuntimeBrokerClient interface {
 	// Returns the command output, exit code, and any error.
 	ExecAgent(ctx context.Context, brokerID, brokerEndpoint, agentID, projectID string, command []string, timeout int) (string, int, error)
 
-	// CleanupProject asks a broker to remove its local hub-managed project directory.
+	// CleanupProject asks a broker to remove its local hub-native project directory.
 	// brokerID is used for HMAC authentication lookup.
 	// 404 responses are tolerated for idempotency.
 	CleanupProject(ctx context.Context, brokerID, brokerEndpoint, projectSlug string) error
@@ -365,7 +375,7 @@ type RemoteCreateAgentRequest struct {
 	// Only populated when GatherEnv is true.
 	EnvSources map[string]string `json:"envSources,omitempty"`
 
-	// ProjectSlug is the project slug for hub-managed projects.
+	// ProjectSlug is the project slug for hub-native projects.
 	// When set, the broker creates the workspace at ~/.scion/projects/<slug>/
 	// instead of the default worktree-based path.
 	ProjectSlug string `json:"projectSlug,omitempty"`
@@ -413,15 +423,6 @@ type RemoteAgentConfig struct {
 	// TemplateHash is the content hash of the template for cache validation.
 	// If the cached template's hash matches, it can be used without re-downloading.
 	TemplateHash string `json:"templateHash,omitempty"`
-
-	// HarnessConfigID is the Hub harness-config ID for hydration on the broker.
-	// When set, the broker fetches the harness-config from the Hub's storage
-	// backend rather than requiring it on the broker's local filesystem.
-	HarnessConfigID string `json:"harnessConfigId,omitempty"`
-
-	// HarnessConfigHash is the content hash of the harness-config for cache
-	// validation, mirroring TemplateHash.
-	HarnessConfigHash string `json:"harnessConfigHash,omitempty"`
 
 	// GitClone specifies git clone parameters for git-anchored projects.
 	// When set, the runtime broker skips workspace mounting and injects env vars
@@ -509,9 +510,15 @@ type Server struct {
 	controlChannel         *ControlChannelManager  // WebSocket control channel for runtime brokers
 	authzService           *AuthzService           // Authorization service for policy evaluation
 	events                 EventPublisher          // Event publisher for real-time SSE updates
+	commandBus             CommandBus              // Inter-node dispatch signal bus (nil-safe; nil = no-op)
 	notificationDispatcher *NotificationDispatcher // Notification dispatcher for agent status events
+	// reconcile op executors (seams): default to executeDispatch/deliverMessage;
+	// Phase 3/4 supply the real local-tunnel ops; tests override for exactly-once.
+	execDispatch func(ctx context.Context, d store.BrokerDispatch) (string, error)
+	deliverMsg   func(ctx context.Context, m *store.Message) error
 	maintenance            *MaintenanceState       // Runtime maintenance mode state
 	hubID                  string                  // Unique hub instance ID for secret namespacing
+	instanceID             string                  // Unique per-process ID (uuid); affinity key for broker dispatch
 	embeddedBrokerID       string                  // Broker ID when running in hub+broker combo mode
 	scheduler              *Scheduler              // Unified scheduler for recurring tasks
 	cleanupOnce            sync.Once               // Ensures CleanupResources runs only once
@@ -541,6 +548,10 @@ type Server struct {
 	// connection-pool sampler started in StartBackgroundServices.
 	dbMetrics dbmetrics.Recorder
 
+	// Broker dispatch metrics recorder (B5-2). Defaults to a disabled no-op
+	// recorder; SetDispatchMetrics wires a real exporter.
+	dispatchMetrics dispatchmetrics.Recorder
+
 	// stopPoolSampler stops the DB pool-stats sampling goroutine on shutdown.
 	stopPoolSampler func()
 
@@ -569,6 +580,16 @@ type Server struct {
 	githubAppRateLimit *githubapp.RateLimitInfo
 }
 
+func newInstanceID() string {
+	if podName := os.Getenv("POD_NAME"); podName != "" {
+		return podName + "-" + uuid.NewString()
+	}
+	return uuid.NewString()
+}
+
+// InstanceID returns the per-process unique identifier for this hub instance.
+func (s *Server) InstanceID() string { return s.instanceID }
+
 // New creates a new Hub API server.
 func New(cfg ServerConfig, s store.Store) (*Server, error) {
 	// Apply defaults for zero-value fields that have meaningful defaults.
@@ -585,6 +606,7 @@ func New(cfg ServerConfig, s store.Store) (*Server, error) {
 		events:      noopEventPublisher{},
 		maintenance: NewMaintenanceState(cfg.AdminMode, cfg.MaintenanceMessage),
 		hubID:       cfg.HubID,
+		instanceID:  newInstanceID(),
 
 		// Subsystem loggers
 		agentLifecycleLog: logging.Subsystem("hub.agent-lifecycle"),
@@ -678,6 +700,10 @@ func New(cfg ServerConfig, s store.Store) (*Server, error) {
 	}
 
 	// Initialize audit logger (used by broker auth and invite system)
+	// Default reconcile-drain op executors (Phase 3/4 supply the real local ops).
+	srv.execDispatch = srv.executeDispatch
+	srv.deliverMsg = srv.deliverMessage
+
 	srv.auditLogger = NewLogAuditLogger("[Hub Audit]", cfg.Debug)
 
 	// Initialize broker auth service if enabled
@@ -696,10 +722,27 @@ func New(cfg ServerConfig, s store.Store) (*Server, error) {
 		RequestTimeout: 120 * time.Second,
 		Debug:          cfg.Debug,
 	}, logging.Subsystem("hub.control-channel"))
-	// Set disconnect callback to mark broker offline when WebSocket drops
-	srv.controlChannel.SetOnDisconnect(func(brokerID string) {
+	// Set disconnect callback to mark broker offline when WebSocket drops.
+	// Compare-and-clear affinity first: only stamp offline if this hub instance +
+	// session still owns the broker. If affinity has moved (broker flapped to
+	// another replica or re-dialed with a newer session), this is a stale
+	// disconnect and we must NOT clobber the live owner's online status.
+	srv.controlChannel.SetOnDisconnect(func(brokerID, sessionID string) {
 		ctx := context.Background()
-		slog.Info("Broker disconnected, marking offline", "brokerID", brokerID)
+
+		cleared, err := s.ReleaseRuntimeBrokerConnection(ctx, brokerID, srv.instanceID, sessionID)
+		if err != nil {
+			slog.Error("Failed to release broker affinity on disconnect", "brokerID", brokerID, "sessionID", sessionID, "error", err)
+			return
+		}
+		if !cleared {
+			// Another replica (or a newer session on this replica) already owns
+			// the socket. Skip the offline stamp to avoid clobbering it.
+			slog.Info("broker reconnected elsewhere; skipping offline stamp", "brokerID", brokerID, "staleSession", sessionID)
+			return
+		}
+
+		slog.Info("Broker disconnected, marking offline", "brokerID", brokerID, "sessionID", sessionID)
 
 		if err := s.UpdateRuntimeBrokerHeartbeat(ctx, brokerID, store.BrokerStatusOffline); err != nil {
 			slog.Error("Failed to mark broker offline", "brokerID", brokerID, "error", err)
@@ -779,6 +822,18 @@ func New(cfg ServerConfig, s store.Store) (*Server, error) {
 	return srv, nil
 }
 
+// deriveSharedSigningKey deterministically derives a 32-byte HS256 signing key
+// from the deployment's shared signing secret and the logical key name. The key
+// name (e.g. "user_signing_key", "agent_signing_key") provides domain
+// separation so the user and agent keys differ even though both originate from
+// the same shared secret. Every replica configured with the same shared secret
+// derives identical keys, which is what lets a JWT minted by one replica be
+// validated by another.
+func deriveSharedSigningKey(secret, keyName string) []byte {
+	sum := sha256.Sum256([]byte("scion-hub-signing-key:" + keyName + ":" + secret))
+	return sum[:]
+}
+
 // ensureSigningKey ensures a signing key exists, loading it if it does
 // or generating and saving it if it doesn't.
 //
@@ -796,6 +851,27 @@ func (s *Server) ensureSigningKey(ctx context.Context, keyName string, existingK
 			"sha256_prefix", hex.EncodeToString(fp[:8]),
 		)
 		return existingKey, nil
+	}
+
+	// When a deployment-wide shared signing secret is configured (the same
+	// secret every replica receives via --session-secret / SESSION_SECRET),
+	// derive the signing key deterministically from it. This makes the key
+	// identical on every replica regardless of the host-derived hub ID, so a
+	// JWT minted by one replica validates on any other. It mirrors the web
+	// session cookie store (commit 0515e2a8), whose keys are derived from the
+	// same shared secret, and is what lets the hub scale horizontally behind a
+	// load balancer without operators having to pin a matching HubID on each
+	// replica. Per-host secret-backend storage (below) is bypassed entirely.
+	if s.config.SharedSigningSecret != "" {
+		key := deriveSharedSigningKey(s.config.SharedSigningSecret, keyName)
+		fp := sha256.Sum256(key)
+		slog.Info("ensureSigningKey: derived from shared signing secret",
+			"key", keyName,
+			"source", "shared_secret",
+			"key_len", len(key),
+			"sha256_prefix", hex.EncodeToString(fp[:8]),
+		)
+		return key, nil
 	}
 
 	hubID := s.hubID
@@ -1268,6 +1344,13 @@ func (s *Server) SetDBMetrics(rec dbmetrics.Recorder) {
 	s.dbMetrics = rec
 }
 
+// SetDispatchMetrics wires the broker-dispatch metrics recorder (B5-2).
+func (s *Server) SetDispatchMetrics(rec dispatchmetrics.Recorder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispatchMetrics = rec
+}
+
 // GetMaintenanceState returns the runtime maintenance state.
 func (s *Server) GetMaintenanceState() *MaintenanceState {
 	return s.maintenance
@@ -1301,6 +1384,24 @@ func (s *Server) SetEventPublisher(ep EventPublisher) {
 	s.events = ep
 }
 
+// SetCommandBus sets the inter-node dispatch signal bus. Nil is safe (treated
+// as no-op). Called from the server-foreground init path after backend selection.
+func (s *Server) SetCommandBus(cb CommandBus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.commandBus = cb
+	if pgBus, ok := cb.(*PostgresCommandBus); ok {
+		pgBus.SetOnReconnect(func() {
+			if rec := s.dispatchMetrics; rec != nil {
+				rec.IncCmdBusReconnects(context.Background(), 1)
+			}
+		})
+	}
+}
+
+// CommandBus returns the configured command bus, or nil.
+func (s *Server) CommandBus() CommandBus { return s.commandBus }
+
 // StartNotificationDispatcher creates and starts the notification dispatcher
 // if a subscription-capable EventPublisher is available. It uses a lazy getter for the
 // AgentDispatcher so it works even if SetDispatcher is called later.
@@ -1321,6 +1422,7 @@ func (s *Server) StartNotificationDispatcher() {
 	nd := NewNotificationDispatcher(s.store, s.events, s.GetDispatcher, logging.Subsystem("hub.notifications"))
 	nd.messageLog = s.dedicatedMessageLog
 	nd.channelRegistry = s.channelRegistry
+	nd.signalDeferred = s.signalDeferredMessage
 	s.notificationDispatcher = nd
 	s.notificationDispatcher.Start()
 }
@@ -1344,6 +1446,7 @@ func (s *Server) StartMessageBroker(b eventbus.EventBus) {
 
 	proxy := NewMessageBrokerProxy(b, s.store, s.events, s.GetDispatcher, logging.Subsystem("hub.broker"))
 	proxy.messageLog = s.dedicatedMessageLog
+	proxy.SetSignalDeferred(s.signalDeferredMessage)
 	s.messageBrokerProxy = proxy
 	proxy.Start()
 
@@ -1372,7 +1475,9 @@ func (s *Server) CreateAuthenticatedDispatcher() *HTTPAgentDispatcher {
 	// Wrap with hybrid client that prefers control channel
 	var client RuntimeBrokerClient
 	if s.controlChannel != nil {
-		client = NewHybridBrokerClient(s.controlChannel, httpClient, &hmacBrokerSigner{store: s.store}, s.config.Debug)
+		hbc := NewHybridBrokerClient(s.controlChannel, httpClient, &hmacBrokerSigner{store: s.store}, s.config.Debug)
+		hbc.SetAffinityLookup(StoreAffinityLookup(s.store, 0))
+		client = hbc
 	} else {
 		client = httpClient
 	}
@@ -1414,6 +1519,16 @@ func (s *Server) CreateAuthenticatedDispatcher() *HTTPAgentDispatcher {
 	// Configure GitHub App token minter if the app is configured
 	if s.config.GitHubAppConfig.AppID != 0 {
 		dispatcher.SetGitHubAppMinter(s)
+	}
+
+	// Wire cross-node lifecycle dispatch deps (B4-2) so the dispatcher
+	// can handle ErrLifecycleDeferred from route-gated Start/Stop/Restart
+	// by writing durable intent, signaling the owning node, and waiting
+	// for the terminal phase. In SQLite mode events/commandBus are no-ops,
+	// and route() always returns routeLocal, so this never triggers.
+	dispatcher.SetCrossNodeDeps(s.events, s.commandBus)
+	if s.dispatchMetrics != nil {
+		dispatcher.SetDispatchMetrics(s.dispatchMetrics)
 	}
 
 	return dispatcher
@@ -1604,12 +1719,16 @@ func (s *Server) messageEventHandler() EventHandler {
 		structuredMsg.Plain = payload.Plain
 		structuredMsg.Urgent = payload.Interrupt
 
-		if err := dispatcher.DispatchAgentMessage(ctx, agent, payload.Message, payload.Interrupt, structuredMsg); err != nil {
+		if err := dispatcher.DispatchAgentMessage(ctx, agent, payload.Message, payload.Interrupt, structuredMsg); errors.Is(err, ErrMessageDeferred) {
+			s.signalDeferredMessage(ctx, agent.RuntimeBrokerID, agent.ID)
+			slog.Info("Scheduler: message deferred for cross-node delivery",
+				"eventID", evt.ID, "agent_id", agent.ID, "agentName", agent.Name)
+		} else if err != nil {
 			return fmt.Errorf("failed to dispatch message to agent %s: %w", agent.Name, err)
+		} else {
+			slog.Info("Scheduler: message delivered to agent",
+				"eventID", evt.ID, "agent_id", agent.ID, "agentName", agent.Name)
 		}
-
-		slog.Info("Scheduler: message delivered to agent",
-			"eventID", evt.ID, "agent_id", agent.ID, "agentName", agent.Name)
 		return nil
 	}
 }
@@ -1872,6 +1991,8 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	s.scheduler.RegisterEventHandler("message", s.messageEventHandler())
 	s.scheduler.RegisterEventHandler("dispatch_agent", s.dispatchAgentEventHandler())
 	s.scheduler.RegisterRecurringSingleton("schedule-evaluator", 1, store.LockScheduleEvaluator, s.evaluateSchedulesHandler())
+	s.scheduler.RegisterRecurringSingleton("broker-affinity-reap", 1, store.LockBrokerAffinityReap, s.brokerAffinityReapHandler())
+	s.scheduler.RegisterRecurringSingleton("broker-message-sweep", 1, store.LockBrokerMessageSweep, s.brokerMessageSweepHandler())
 
 	// Register GitHub App health check if the app is configured
 	s.mu.RLock()
@@ -1985,6 +2106,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.events != nil {
 		s.events.Close()
 	}
+	if s.commandBus != nil {
+		s.commandBus.Close()
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -2023,6 +2147,9 @@ func (s *Server) CleanupResources(ctx context.Context) error {
 		}
 		if s.events != nil {
 			s.events.Close()
+		}
+		if s.commandBus != nil {
+			s.commandBus.Close()
 		}
 		if s.logQueryService != nil {
 			s.logQueryService.Close()
@@ -2086,9 +2213,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/harness-configs", s.handleHarnessConfigs)
 	s.mux.HandleFunc("/api/v1/harness-configs/", s.handleHarnessConfigByID)
 
-	// Unified, kind/scope-generic resource import (templates + harness-configs).
-	s.mux.HandleFunc("/api/v1/resources/import", s.handleResourcesImport)
-
 	s.mux.HandleFunc("/api/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/api/v1/users/", s.handleUserByID)
 
@@ -2112,9 +2236,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/brokers", s.handleBrokersEndpoint)
 	s.mux.HandleFunc("/api/v1/brokers/join", s.handleBrokerJoin)
 	s.mux.HandleFunc("/api/v1/brokers/", s.handleBrokerByIDRoutes)
-
-	// Message channel listing
-	s.mux.HandleFunc("/api/v1/message-channels", s.handleMessageChannels)
 
 	// Broker plugin inbound message delivery
 	s.mux.HandleFunc("/api/v1/broker/inbound", s.handleBrokerInbound)
@@ -2449,31 +2570,35 @@ func (s *Server) handleRuntimeBrokerConnect(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Use the broker ID from header
-		if err := s.controlChannel.HandleUpgrade(w, r, brokerID); err != nil {
+		sessionID, err := s.controlChannel.HandleUpgrade(w, r, brokerID)
+		if err != nil {
 			slog.Error("Upgrade failed for broker", "brokerID", brokerID, "error", err)
 			// Error already written by upgrader
 			return
 		}
-		s.markBrokerOnline(brokerID)
+		s.markBrokerOnline(brokerID, sessionID)
 		return
 	}
 
 	// Use authenticated broker identity
-	if err := s.controlChannel.HandleUpgrade(w, r, broker.ID()); err != nil {
+	sessionID, err := s.controlChannel.HandleUpgrade(w, r, broker.ID())
+	if err != nil {
 		slog.Error("Upgrade failed for broker", "brokerID", broker.ID(), "error", err)
 		// Error already written by upgrader
 		return
 	}
-	s.markBrokerOnline(broker.ID())
+	s.markBrokerOnline(broker.ID(), sessionID)
 }
 
 // markBrokerOnline updates broker and provider statuses to online after a successful WebSocket connection.
-func (s *Server) markBrokerOnline(brokerID string) {
+// It claims broker affinity for this hub instance + the connection's sessionID,
+// which also bumps status->online and refreshes the heartbeat in one CAS write.
+func (s *Server) markBrokerOnline(brokerID, sessionID string) {
 	ctx := context.Background()
-	slog.Info("Broker connected, marking online", "brokerID", brokerID)
+	slog.Info("Broker connected, marking online", "brokerID", brokerID, "sessionID", sessionID, "instanceID", s.instanceID)
 
-	if err := s.store.UpdateRuntimeBrokerHeartbeat(ctx, brokerID, store.BrokerStatusOnline); err != nil {
-		slog.Error("Failed to mark broker online", "brokerID", brokerID, "error", err)
+	if err := s.store.ClaimRuntimeBrokerConnection(ctx, brokerID, s.instanceID, sessionID); err != nil {
+		slog.Error("Failed to claim broker connection", "brokerID", brokerID, "error", err)
 	}
 
 	providers, err := s.store.GetBrokerProjects(ctx, brokerID)
@@ -2498,6 +2623,12 @@ func (s *Server) markBrokerOnline(brokerID string) {
 		brokerName = broker.Name
 	}
 	s.events.PublishBrokerConnected(ctx, brokerID, brokerName, projectIDs)
+
+	// Durability backstop (design §5.3): the moment this node owns the socket,
+	// drain any durable dispatch intent that accumulated while the broker was
+	// offline or owned elsewhere. Async so it never blocks the connect path;
+	// idempotent + CAS-gated so concurrent drains execute each item once.
+	go s.reconcileBroker(context.Background(), brokerID)
 }
 
 // isWebSocketUpgrade checks if the request is a WebSocket upgrade request.

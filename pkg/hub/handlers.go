@@ -207,16 +207,15 @@ type CreateAgentRequest struct {
 	// GatherEnv enables the env-gather flow where the broker evaluates env
 	// completeness and may return a 202 requiring the CLI to supply missing values.
 	GatherEnv bool `json:"gatherEnv,omitempty"`
-	// Resume signals that the caller wants to resume an existing stopped agent
-	// in-place rather than deleting and recreating it. When true and the
-	// existing agent is in PhaseStopped, the agent record is preserved and
-	// the broker is asked to restart the container.
-	Resume bool `json:"resume,omitempty"`
 	// Notify subscribes the creating agent/user to status notifications for the new agent.
 	Notify bool `json:"notify,omitempty"`
 	// CleanupMode controls stale-existing-agent cleanup behavior during create:
 	// "strict" (default) fails create if broker cleanup fails; "force" continues.
 	CleanupMode string `json:"cleanupMode,omitempty"`
+	// Resume signals that the caller wants to resume an existing stopped agent
+	// rather than create a brand-new one. When true and a stopped agent with
+	// the same name exists, the Hub recovers it instead of creating fresh.
+	Resume bool `json:"resume,omitempty"`
 	// GCPIdentity specifies the GCP identity assignment for the agent.
 	// Controls metadata server behavior and optional service account binding.
 	GCPIdentity *GCPIdentityAssignment `json:"gcp_identity,omitempty"`
@@ -783,7 +782,7 @@ func (s *Server) createAgentInProject(
 		}
 	}
 
-	// Hub-managed/shared-workspace project remote broker support: if the project has
+	// Hub-native/shared-workspace project remote broker support: if the project has
 	// a managed workspace and the workspace path is set, upload it to GCS so
 	// a remote broker can download it.
 	if (project.GitRemote == "" || project.IsSharedWorkspace()) && agent.AppliedConfig != nil && agent.AppliedConfig.Workspace != "" {
@@ -1926,16 +1925,12 @@ func (s *Server) handleAgentTokenRefresh(w http.ResponseWriter, r *http.Request,
 
 // OutboundMessageRequest is the request body for POST /api/v1/agents/{id}/outbound-message.
 type OutboundMessageRequest struct {
-	Recipient   string            `json:"recipient,omitempty"`
-	RecipientID string            `json:"recipient_id,omitempty"`
-	Msg         string            `json:"msg"`
-	Type        string            `json:"type,omitempty"`
-	Urgent      bool              `json:"urgent,omitempty"`
-	Attachments []string          `json:"attachments,omitempty"`
-	Visibility  string            `json:"visibility,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	Channel     string            `json:"channel,omitempty"`
-	ThreadID    string            `json:"thread_id,omitempty"`
+	Recipient   string   `json:"recipient,omitempty"`
+	RecipientID string   `json:"recipient_id,omitempty"`
+	Msg         string   `json:"msg"`
+	Type        string   `json:"type,omitempty"`
+	Urgent      bool     `json:"urgent,omitempty"`
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 // handleAgentOutboundMessage handles POST /api/v1/agents/{id}/outbound-message.
@@ -2047,15 +2042,11 @@ func (s *Server) handleAgentOutboundMessage(w http.ResponseWriter, r *http.Reque
 		Type:        req.Type,
 		Urgent:      req.Urgent,
 		AgentID:     agent.ID,
-		Channel:     req.Channel,
-		ThreadID:    req.ThreadID,
 		CreatedAt:   time.Now(),
 	}
 
 	// Build a structured message for external dispatch paths.
 	structuredMsg := &messages.StructuredMessage{
-		Version:     messages.Version,
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 		Sender:      storeMsg.Sender,
 		SenderID:    storeMsg.SenderID,
 		Recipient:   storeMsg.Recipient,
@@ -2064,15 +2055,6 @@ func (s *Server) handleAgentOutboundMessage(w http.ResponseWriter, r *http.Reque
 		Type:        storeMsg.Type,
 		Urgent:      storeMsg.Urgent,
 		Attachments: req.Attachments,
-		Visibility:  req.Visibility,
-		Metadata:    req.Metadata,
-		Channel:     req.Channel,
-		ThreadID:    req.ThreadID,
-	}
-
-	if err := structuredMsg.Validate(); err != nil {
-		ValidationError(w, err.Error(), nil)
-		return
 	}
 
 	// Route through broker when available; otherwise persist and publish
@@ -2287,9 +2269,6 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 		if structuredMsg.Type == "" {
 			structuredMsg.Type = messages.TypeInstruction
 		}
-		if structuredMsg.Channel == "" && GetAgentIdentityFromContext(ctx) == nil {
-			structuredMsg.Channel = "web"
-		}
 	} else if req.Message != "" {
 		plainMessage = req.Message
 		// Build a structured message from the plain text so that downstream
@@ -2306,16 +2285,13 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 		}
 		structuredMsg = messages.NewInstruction(sender, "agent:"+id, plainMessage)
 		structuredMsg.SenderID = senderID
-		if GetAgentIdentityFromContext(ctx) == nil {
-			structuredMsg.Channel = "web"
-		}
 	} else {
 		ValidationError(w, "message or structured_message is required", nil)
 		return
 	}
 
-	// Detect group recipient for multi-target fan-out.
-	if structuredMsg != nil && messages.IsGroupRecipient(structuredMsg.Recipient) {
+	// Detect set[] recipient for multi-target fan-out.
+	if structuredMsg != nil && messages.IsSetRecipient(structuredMsg.Recipient) {
 		s.handleGroupMessage(w, r, id, structuredMsg, plainMessage, req.Interrupt)
 		return
 	}
@@ -2413,6 +2389,7 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 	s.logMessage("message dispatched", logAttrs...)
 
 	// Persist to message store (write-through; non-fatal if store fails)
+	var persistedMsgID string
 	if structuredMsg != nil {
 		storeMsg := &store.Message{
 			ID:          api.NewUUID(),
@@ -2428,7 +2405,7 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 			AgentID:     agent.ID,
 			CreatedAt:   time.Now(),
 		}
-		// Propagate GroupID from metadata so CLI-originated group messages
+		// Propagate GroupID from metadata so CLI-originated set[] messages
 		// preserve correlation in the store.
 		if structuredMsg.Metadata != nil {
 			if gid, ok := structuredMsg.Metadata["group_id"]; ok {
@@ -2437,6 +2414,8 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 		}
 		if err := s.store.CreateMessage(ctx, storeMsg); err != nil {
 			s.messageLog.Error("Failed to persist message", "error", err)
+		} else {
+			persistedMsgID = storeMsg.ID
 		}
 		// Publish SSE event so connected browser clients can update the
 		// per-agent conversation view in real time — mirrors the agent→user
@@ -2454,9 +2433,37 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 		ServiceNotReady(w, "Agent has no runtime broker assigned — the server may still be starting up")
 		return
 	}
-	if err := dispatcher.DispatchAgentMessage(ctx, agent, plainMessage, req.Interrupt, structuredMsg); err != nil {
+	if err := dispatcher.DispatchAgentMessage(ctx, agent, plainMessage, req.Interrupt, structuredMsg); errors.Is(err, ErrMessageDeferred) {
+		s.signalDeferredMessage(ctx, agent.RuntimeBrokerID, agent.ID)
+		// Create notification subscription if requested (before returning 202)
+		if req.Notify {
+			var notifySubscriberType, notifySubscriberID, createdBy string
+			if agentIdent := GetAgentIdentityFromContext(ctx); agentIdent != nil {
+				createdBy = agentIdent.ID()
+				if creatorAgent, err := s.store.GetAgent(ctx, agentIdent.ID()); err == nil {
+					notifySubscriberType = store.SubscriberTypeAgent
+					notifySubscriberID = creatorAgent.Slug
+				}
+			} else if userIdent := GetUserIdentityFromContext(ctx); userIdent != nil {
+				createdBy = userIdent.ID()
+				notifySubscriberType = store.SubscriberTypeUser
+				notifySubscriberID = userIdent.ID()
+			}
+			s.createNotifySubscription(ctx, agent.ID, agent.ProjectID, notifySubscriberType, notifySubscriberID, createdBy)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	} else if err != nil {
 		RuntimeError(w, "Failed to send message to runtime broker: "+err.Error())
 		return
+	}
+
+	// Mark the message as dispatched so reconcileBroker does not
+	// re-deliver it on the next broker reconnect.
+	if persistedMsgID != "" {
+		if _, err := s.store.MarkMessageDispatched(ctx, persistedMsgID); err != nil {
+			s.messageLog.Error("Failed to mark message dispatched", "id", persistedMsgID, "error", err)
+		}
 	}
 
 	// Publish agent-to-agent messages through the broker so plugin observers
@@ -2494,29 +2501,28 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request, id s
 	w.WriteHeader(http.StatusOK)
 }
 
-// GroupMessageRecipientResult holds the delivery status for a single recipient
-// in a message group fan-out.
+// GroupMessageRecipientResult represents the delivery status for one recipient in a set[] delivery.
 type GroupMessageRecipientResult struct {
 	Recipient string `json:"recipient"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`
 }
 
-// GroupMessageResponse is the JSON response for a group message delivery.
+// GroupMessageResponse is the JSON response for a set[] message delivery.
 type GroupMessageResponse struct {
-	GroupID   string                        `json:"group_id"`
-	Delivered int                           `json:"delivered"`
-	Failed    int                           `json:"failed"`
+	GroupID   string                      `json:"group_id"`
+	Delivered int                         `json:"delivered"`
+	Failed    int                         `json:"failed"`
 	Results   []GroupMessageRecipientResult `json:"results"`
 }
 
-// handleGroupMessage fans out a structured message to multiple recipients in a message group.
+// handleGroupMessage fans out a structured message to multiple recipients parsed from set[].
 func (s *Server) handleGroupMessage(w http.ResponseWriter, r *http.Request, anchorID string, msg *messages.StructuredMessage, plainMessage string, interrupt bool) {
 	ctx := r.Context()
 
-	recipients, err := messages.ParseGroupRecipient(msg.Recipient)
+	recipients, err := messages.ParseSetRecipient(msg.Recipient)
 	if err != nil {
-		ValidationError(w, "invalid group recipient: "+err.Error(), nil)
+		ValidationError(w, "invalid set[] recipient: "+err.Error(), nil)
 		return
 	}
 
@@ -2532,7 +2538,7 @@ func (s *Server) handleGroupMessage(w http.ResponseWriter, r *http.Request, anch
 	for i, r := range recipients {
 		recipientStrs[i] = r.String()
 	}
-	recipientsSet := messages.FormatGroupRecipients(msg.Sender, recipientStrs)
+	recipientsSet := messages.FormatSetRecipients(msg.Sender, recipientStrs)
 
 	groupID := api.NewUUID()
 	results := make([]GroupMessageRecipientResult, len(recipients))
@@ -2571,12 +2577,17 @@ func (s *Server) handleGroupMessage(w http.ResponseWriter, r *http.Request, anch
 				CreatedAt:   time.Now(),
 			}
 			if err := s.store.CreateMessage(ctx, storeMsg); err != nil {
-				s.messageLog.Error("Failed to persist group message", "recipient", recipStr, "error", err)
+				s.messageLog.Error("Failed to persist set message", "recipient", recipStr, "error", err)
 			}
 			s.events.PublishUserMessage(ctx, storeMsg)
 
 			if dispatcher != nil && agent.RuntimeBrokerID != "" {
-				if err := dispatcher.DispatchAgentMessage(ctx, agent, plainMessage, interrupt, &agentMsg); err != nil {
+				if err := dispatcher.DispatchAgentMessage(ctx, agent, plainMessage, interrupt, &agentMsg); errors.Is(err, ErrMessageDeferred) {
+					s.signalDeferredMessage(ctx, agent.RuntimeBrokerID, agent.ID)
+					results[i] = GroupMessageRecipientResult{Recipient: recipStr, Status: "deferred"}
+					delivered++
+					continue
+				} else if err != nil {
 					results[i] = GroupMessageRecipientResult{Recipient: recipStr, Status: "failed", Error: err.Error()}
 					continue
 				}
@@ -2588,13 +2599,19 @@ func (s *Server) handleGroupMessage(w http.ResponseWriter, r *http.Request, anch
 				continue
 			}
 
+			// Mark the message as dispatched so reconcileBroker does not
+			// re-deliver it on the next broker reconnect.
+			if _, err := s.store.MarkMessageDispatched(ctx, storeMsg.ID); err != nil {
+				s.messageLog.Error("Failed to mark set message dispatched", "id", storeMsg.ID, "error", err)
+			}
+
 			// Publish agent-to-agent messages through the broker for plugin observers.
 			if strings.HasPrefix(agentMsg.Sender, "agent:") {
 				if bp := s.GetMessageBrokerProxy(); bp != nil {
 					observerMsg := agentMsg
 					observerMsg.ObserverOnly = true
 					if err := bp.PublishMessage(ctx, projectID, &observerMsg); err != nil {
-						s.messageLog.Error("Failed to publish group observer message",
+						s.messageLog.Error("Failed to publish set[] observer message",
 							"recipient", recipStr, "error", err)
 					}
 				}
@@ -2657,7 +2674,7 @@ func (s *Server) handleGroupMessage(w http.ResponseWriter, r *http.Request, anch
 				CreatedAt:   time.Now(),
 			}
 			if err := s.store.CreateMessage(ctx, storeMsg); err != nil {
-				s.messageLog.Error("Failed to persist group message", "recipient", recipStr, "error", err)
+				s.messageLog.Error("Failed to persist set message", "recipient", recipStr, "error", err)
 			}
 			s.events.PublishUserMessage(ctx, storeMsg)
 
@@ -2666,7 +2683,7 @@ func (s *Server) handleGroupMessage(w http.ResponseWriter, r *http.Request, anch
 		}
 	}
 
-	s.logMessage("group message dispatched",
+	s.logMessage("set message dispatched",
 		"project_id", projectID,
 		"group_id", groupID,
 		"total", len(recipients),
@@ -2794,10 +2811,15 @@ func (s *Server) broadcastDirect(w http.ResponseWriter, r *http.Request, project
 		agentMsg := *msg
 		agentMsg.Recipient = "agent:" + agent.Slug
 		agentMsg.RecipientID = agent.ID
-		if err := dispatcher.DispatchAgentMessage(ctx, &agent, agentMsg.Msg, interrupt, &agentMsg); err != nil {
+		dispatched := false
+		if err := dispatcher.DispatchAgentMessage(ctx, &agent, agentMsg.Msg, interrupt, &agentMsg); errors.Is(err, ErrMessageDeferred) {
+			s.signalDeferredMessage(ctx, agent.RuntimeBrokerID, agent.ID)
+		} else if err != nil {
 			s.messageLog.Error("Failed to deliver broadcast message to agent",
 				"agent_id", agent.ID,
 				"agentSlug", agent.Slug, "error", err)
+		} else {
+			dispatched = true
 		}
 		// Persist broadcast message per recipient (non-fatal)
 		storeMsg := &store.Message{
@@ -2816,6 +2838,11 @@ func (s *Server) broadcastDirect(w http.ResponseWriter, r *http.Request, project
 		}
 		if err := s.store.CreateMessage(ctx, storeMsg); err != nil {
 			s.messageLog.Error("Failed to persist broadcast message", "agent_id", agent.ID, "error", err)
+		} else if dispatched {
+			// Mark dispatched so reconcileBroker does not re-deliver.
+			if _, err := s.store.MarkMessageDispatched(ctx, storeMsg.ID); err != nil {
+				s.messageLog.Error("Failed to mark broadcast message dispatched", "id", storeMsg.ID, "error", err)
+			}
 		}
 	}
 
@@ -3545,7 +3572,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if project.GitRemote == "" {
-		// Hub-managed project (no git remote): create workspace directory.
+		// Hub-native project (no git remote): create workspace directory.
 		if err := s.initHubManagedProject(project); err != nil {
 			slog.Warn("failed to initialize project workspace",
 				"project_id", project.ID, "slug", project.Slug, "error", err)
@@ -3817,7 +3844,7 @@ func (s *Server) initHubManagedProject(project *store.Project) error {
 		return fmt.Errorf("failed to create .scion directory: %w", err)
 	}
 
-	// Seed default settings.yaml directly in scionDir. Hub-managed projects
+	// Seed default settings.yaml directly in scionDir. Hub-native projects
 	// bypass InitProject (which uses split storage for git repos) and keep
 	// all configuration in-place.
 	settingsPath := filepath.Join(scionDir, "settings.yaml")
@@ -3849,7 +3876,7 @@ func (s *Server) initHubManagedProject(project *store.Project) error {
 }
 
 // cloneSharedWorkspaceProject performs the host-side git clone for a shared-workspace
-// git project. It clones the repository into the hub-managed workspace path and
+// git project. It clones the repository into the hub-native workspace path and
 // seeds the .scion project structure on top. If the clone fails, the workspace
 // directory is cleaned up and an error is returned.
 func (s *Server) cloneSharedWorkspaceProject(ctx context.Context, project *store.Project) error {
@@ -3995,7 +4022,7 @@ func (s *Server) syncWorkspaceOnStop(ctx context.Context, agent *store.Agent) {
 
 	project, err := s.store.GetProject(ctx, agent.ProjectID)
 	if err != nil || (project.GitRemote != "" && !project.IsSharedWorkspace()) {
-		return // Not hub-managed/shared-workspace or project not found
+		return // Not hub-native/shared-workspace or project not found
 	}
 
 	// Check if broker is co-located (embedded or has local path)
@@ -4202,7 +4229,7 @@ func (s *Server) handleProjectRegister(w http.ResponseWriter, r *http.Request) {
 
 		// Add as project provider. When the project already existed and the
 		// broker is already a provider, preserve the existing localPath to
-		// avoid converting a hub-managed git project into a linked project.
+		// avoid converting a hub-native git project into a linked project.
 		localPath := req.Path
 		if !created {
 			if existingProvider, err := s.store.GetProjectProvider(ctx, project.ID, broker.ID); err == nil {
@@ -4298,7 +4325,7 @@ func (s *Server) handleProjectRegister(w http.ResponseWriter, r *http.Request) {
 
 		// Add as project provider. When the project already existed and the
 		// broker is already a provider, preserve the existing localPath to
-		// avoid converting a hub-managed git project into a linked project.
+		// avoid converting a hub-native git project into a linked project.
 		localPath := req.Path
 		if !created {
 			if existingProvider, err := s.store.GetProjectProvider(ctx, project.ID, broker.ID); err == nil {
@@ -4526,12 +4553,6 @@ func (s *Server) handleProjectRoutes(w http.ResponseWriter, r *http.Request) {
 	// Check for nested /import-templates path
 	if subPath == "import-templates" {
 		s.handleProjectImportTemplates(w, r, projectID)
-		return
-	}
-
-	// Check for nested /import-harness-configs path
-	if subPath == "import-harness-configs" {
-		s.handleProjectImportHarnessConfigs(w, r, projectID)
 		return
 	}
 
@@ -5245,7 +5266,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, id string
 	// Clean up project-scoped harness configs (best-effort), including storage files.
 	s.deleteProjectHarnessConfigs(ctx, id)
 
-	// For hub-managed and shared-workspace projects, notify provider brokers to clean up
+	// For hub-native and shared-workspace projects, notify provider brokers to clean up
 	// their local project directories. This must run before DeleteProject because
 	// the cascade deletes the project_providers we need to enumerate.
 	if project.GitRemote == "" || project.IsSharedWorkspace() {
@@ -5257,7 +5278,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	// For hub-managed and shared-workspace projects, remove the filesystem directory.
+	// For hub-native and shared-workspace projects, remove the filesystem directory.
 	if (project.GitRemote == "" || project.IsSharedWorkspace()) && project.Slug != "" {
 		if projectPath, err := hubManagedProjectPath(project.Slug); err == nil {
 			if err := util.RemoveAllSafe(projectPath); err != nil {
@@ -8592,24 +8613,6 @@ func (s *Server) getHarnessConfigFromTemplate(template *store.Template, fallback
 	return fallback
 }
 
-// lookupHarnessConfigRecord resolves a harness-config reference (name or slug)
-// to its Hub record, checking project scope first then global — the same
-// precedence the broker uses for on-disk lookup. Returns nil if not found.
-func (s *Server) lookupHarnessConfigRecord(ctx context.Context, projectID, ref string) *store.HarnessConfig {
-	if ref == "" {
-		return nil
-	}
-	if projectID != "" {
-		if hc, err := s.store.GetHarnessConfigBySlug(ctx, ref, store.HarnessConfigScopeProject, projectID); err == nil && hc != nil {
-			return hc
-		}
-	}
-	if hc, err := s.store.GetHarnessConfigBySlug(ctx, ref, store.HarnessConfigScopeGlobal, ""); err == nil && hc != nil {
-		return hc
-	}
-	return nil
-}
-
 // buildAppliedConfig constructs an AgentAppliedConfig from a CreateAgentRequest.
 // When req.Config is a ScionConfig, its fields are extracted into the applied config
 // and the full ScionConfig is preserved as InlineConfig for threading to the broker.
@@ -8735,25 +8738,6 @@ func (s *Server) populateAgentConfig(ctx context.Context, agent *store.Agent, pr
 		}
 	}
 
-	// Resolve the harness-config name to a Hub record so the broker can hydrate
-	// it from the configured storage backend, mirroring template hydration.
-	// Without this a remote broker can only use harness-configs that happen to
-	// exist on its local filesystem (see resource-storage-refactor §4/§7.3 step 4).
-	hcRef := agent.AppliedConfig.HarnessConfig
-	if hcRef == "" && resolvedTemplate != nil {
-		hcRef = s.getHarnessConfigFromTemplate(resolvedTemplate, "")
-	}
-	if hcRef != "" {
-		projectID := ""
-		if project != nil {
-			projectID = project.ID
-		}
-		if hc := s.lookupHarnessConfigRecord(ctx, projectID, hcRef); hc != nil {
-			agent.AppliedConfig.HarnessConfigID = hc.ID
-			agent.AppliedConfig.HarnessConfigHash = hc.ContentHash
-		}
-	}
-
 	// Merge hub-level telemetry config as lowest-priority default.
 	// Only applies when no per-agent or template telemetry config is set.
 	s.mu.RLock()
@@ -8833,12 +8817,10 @@ func (s *Server) createNotifySubscription(ctx context.Context, agentID, projectI
 // already exists when a create/start request arrives.
 //
 // Phases:
-//  0. Resume from suspended (suspended): recover broker, dispatch start, update in-place → started
-//  1. Resume from stopped (stopped + Resume flag): recover broker, dispatch start, update in-place → started
-//  2. Stale cleanup (running/stopped/error + not resume + not provision-only): dispatch delete, remove from DB → deleted
-//  3. Env-gather re-provisioning (provisioning + GatherEnv): dispatch delete, remove from DB → deleted
-//  4. Restart (created/provisioning/pending + not provision-only): recover broker ID, update config, dispatch start → started
-//  5. Otherwise: none (caller decides what to do)
+//  1. Stale cleanup (running/stopped/error + not provision-only): dispatch delete, remove from DB → deleted
+//  2. Env-gather re-provisioning (provisioning + GatherEnv): dispatch delete, remove from DB → deleted
+//  3. Restart (created/provisioning/pending + not provision-only): recover broker ID, update config, dispatch start → started
+//  4. Otherwise: none (caller decides what to do)
 func (s *Server) handleExistingAgent(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -8891,50 +8873,6 @@ func (s *Server) handleExistingAgent(
 		}
 		if err := s.store.UpdateAgent(ctx, existingAgent); err != nil {
 			s.agentLifecycleLog.Warn("Failed to update agent status after resume", "agent_id", existingAgent.ID, "error", err)
-		}
-
-		if req.Notify {
-			s.createNotifySubscription(ctx, existingAgent.ID, existingAgent.ProjectID, notifySubscriberType, notifySubscriberID, createdBy)
-		}
-
-		s.enrichAgent(ctx, existingAgent, project, nil)
-		writeJSON(w, http.StatusOK, CreateAgentResponse{
-			Agent: existingAgent,
-		})
-		return existingAgentStarted
-	}
-
-	// Stopped agents resumed in-place when the caller explicitly requests resume.
-	// This preserves the agent ID, metadata, and template association. The broker
-	// will recreate the container but the hub-level record stays the same.
-	if !req.ProvisionOnly && req.Resume && existingAgent.Phase == string(state.PhaseStopped) {
-		if existingAgent.RuntimeBrokerID == "" && runtimeBrokerID != "" {
-			existingAgent.RuntimeBrokerID = runtimeBrokerID
-		}
-
-		dispatcher := s.GetDispatcher()
-		if dispatcher == nil || existingAgent.RuntimeBrokerID == "" {
-			writeError(w, http.StatusBadRequest, ErrCodeValidationError,
-				"cannot resume agent: no runtime broker available", nil)
-			return existingAgentErrored
-		}
-
-		if existingAgent.AppliedConfig == nil {
-			existingAgent.AppliedConfig = &store.AgentAppliedConfig{}
-		}
-		if req.Task != "" {
-			existingAgent.AppliedConfig.Task = req.Task
-			existingAgent.AppliedConfig.Attach = req.Attach
-		}
-
-		if err := dispatcher.DispatchAgentStart(ctx, existingAgent, req.Task); err != nil {
-			RuntimeError(w, "Failed to resume stopped agent: "+err.Error())
-			return existingAgentErrored
-		}
-
-		existingAgent.Phase = string(state.PhaseRunning)
-		if err := s.store.UpdateAgent(ctx, existingAgent); err != nil {
-			s.agentLifecycleLog.Warn("Failed to update agent status after resume from stopped", "agent_id", existingAgent.ID, "error", err)
 		}
 
 		if req.Notify {
@@ -9078,7 +9016,7 @@ func (s *Server) resolveRuntimeBroker(ctx context.Context, w http.ResponseWriter
 		"totalProviders", len(allProviders),
 		"onlineProviders", len(availableBrokers),
 		"defaultBroker", project.DefaultRuntimeBrokerID,
-		"isHubManaged", project.GitRemote == "")
+		"isHubNative", project.GitRemote == "")
 
 	// Convert to summary for error responses, marking and prioritizing the default broker
 	brokerSummaries := make([]RuntimeBrokerSummary, 0, len(availableBrokers))
@@ -9372,25 +9310,13 @@ func (s *Server) handleProjectImportTemplates(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	kind := s.templateImportKind()
-	var run func(progress importProgressFunc) ([]string, error)
+	var imported []string
 	if req.WorkspacePath != "" {
-		run = func(progress importProgressFunc) ([]string, error) {
-			return s.importFromWorkspace(ctx, project, req.WorkspacePath, store.TemplateScopeProject, kind, progress)
-		}
+		imported, err = s.importTemplatesFromWorkspace(ctx, project, req.WorkspacePath)
 	} else {
-		sourceURL := config.NormalizeTemplateSourceURL(req.SourceURL)
-		run = func(progress importProgressFunc) ([]string, error) {
-			return s.importFromRemote(ctx, projectID, sourceURL, store.TemplateScopeProject, kind, progress)
-		}
+		req.SourceURL = config.NormalizeTemplateSourceURL(req.SourceURL)
+		imported, err = s.importTemplatesFromRemote(ctx, projectID, req.SourceURL)
 	}
-
-	if importAcceptsNDJSON(r) {
-		s.streamImport(w, run)
-		return
-	}
-
-	imported, err := run(nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "import_failed", err.Error(), nil)
 		return
@@ -9401,128 +9327,6 @@ func (s *Server) handleProjectImportTemplates(w http.ResponseWriter, r *http.Req
 		Count:     len(imported),
 	})
 }
-
-// ============================================================================
-// Project Harness-Config Import
-// ============================================================================
-
-// ImportHarnessConfigsRequest is the request body for direct harness-config
-// import. Exactly one of SourceURL or WorkspacePath should be provided.
-type ImportHarnessConfigsRequest struct {
-	SourceURL     string `json:"sourceUrl"`
-	WorkspacePath string `json:"workspacePath"`
-}
-
-// ImportHarnessConfigsResponse is returned after a direct harness-config import
-// completes.
-type ImportHarnessConfigsResponse struct {
-	HarnessConfigs []string `json:"harnessConfigs"`
-	Count          int      `json:"count"`
-}
-
-// handleProjectImportHarnessConfigs imports harness-configs directly from a
-// remote URL or the project workspace into the project's harness-config store,
-// mirroring handleProjectImportTemplates.
-func (s *Server) handleProjectImportHarnessConfigs(w http.ResponseWriter, r *http.Request, projectID string) {
-	if r.Method != http.MethodPost {
-		MethodNotAllowed(w)
-		return
-	}
-
-	ctx := r.Context()
-
-	// Authorize the caller
-	if agentIdent := GetAgentIdentityFromContext(ctx); agentIdent != nil {
-		if !agentIdent.HasScope(ScopeAgentCreate) {
-			writeError(w, http.StatusForbidden, ErrCodeForbidden, "Missing required scope: project:agent:create", nil)
-			return
-		}
-		if projectID != agentIdent.ProjectID() {
-			writeError(w, http.StatusForbidden, ErrCodeForbidden, "Agents can only import harness-configs within their own project", nil)
-			return
-		}
-	} else if userIdent := GetUserIdentityFromContext(ctx); userIdent != nil {
-		decision := s.authzService.CheckAccess(ctx, userIdent, Resource{
-			Type:       "agent",
-			ParentType: "project",
-			ParentID:   projectID,
-		}, ActionCreate)
-		if !decision.Allowed {
-			writeError(w, http.StatusForbidden, ErrCodeForbidden,
-				"You don't have permission to import harness-configs in this project", nil)
-			return
-		}
-	} else {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required", nil)
-		return
-	}
-
-	var req ImportHarnessConfigsRequest
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body", nil)
-		return
-	}
-
-	if req.SourceURL != "" && req.WorkspacePath != "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Exactly one of sourceUrl or workspacePath must be provided", nil)
-		return
-	}
-
-	if req.SourceURL == "" && req.WorkspacePath == "" {
-		// Default workspace path when neither is provided
-		req.WorkspacePath = "/.scion/harness-configs"
-	}
-
-	// Verify project exists
-	project, err := s.store.GetProject(ctx, projectID)
-	if err != nil {
-		if err == store.ErrNotFound {
-			NotFound(w, "Project")
-			return
-		}
-		writeErrorFromErr(w, err, "")
-		return
-	}
-
-	if s.GetStorage() == nil {
-		writeError(w, http.StatusServiceUnavailable, "storage_unavailable", "Harness-config storage is not configured", nil)
-		return
-	}
-
-	kind := s.harnessConfigImportKind()
-	var run func(progress importProgressFunc) ([]string, error)
-	if req.WorkspacePath != "" {
-		run = func(progress importProgressFunc) ([]string, error) {
-			return s.importFromWorkspace(ctx, project, req.WorkspacePath, store.HarnessConfigScopeProject, kind, progress)
-		}
-	} else {
-		sourceURL := config.NormalizeTemplateSourceURL(req.SourceURL)
-		run = func(progress importProgressFunc) ([]string, error) {
-			return s.importFromRemote(ctx, projectID, sourceURL, store.HarnessConfigScopeProject, kind, progress)
-		}
-	}
-
-	if importAcceptsNDJSON(r) {
-		s.streamImport(w, run)
-		return
-	}
-
-	imported, err := run(nil)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "import_failed", err.Error(), nil)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, ImportHarnessConfigsResponse{
-		HarnessConfigs: imported,
-		Count:          len(imported),
-	})
-}
-
-// ============================================================================
-// Unified Resource Import (kind/scope-generic)
-// ============================================================================
-
 // ImportResourcesRequest is the body for the unified import endpoint
 // (POST /api/v1/resources/import). It imports a single kind of resource from a
 // remote source URL into the given scope.

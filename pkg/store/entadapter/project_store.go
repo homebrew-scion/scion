@@ -539,6 +539,9 @@ func entBrokerToStore(b *ent.RuntimeBroker) *store.RuntimeBroker {
 	if b.LastHeartbeat != nil {
 		sb.LastHeartbeat = *b.LastHeartbeat
 	}
+	sb.ConnectedHubID = b.ConnectedHubID
+	sb.ConnectedSessionID = b.ConnectedSessionID
+	sb.ConnectedAt = b.ConnectedAt
 	unmarshalRawJSON(b.Capabilities, &sb.Capabilities)
 	// Profiles are persisted in the "runtimes" column (legacy naming).
 	unmarshalRawJSON(b.Runtimes, &sb.Profiles)
@@ -579,6 +582,15 @@ func (s *ProjectStore) CreateRuntimeBroker(ctx context.Context, b *store.Runtime
 	}
 	if b.CreatedBy != "" {
 		create.SetCreatedBy(b.CreatedBy)
+	}
+	if b.ConnectedHubID != nil {
+		create.SetConnectedHubID(*b.ConnectedHubID)
+	}
+	if b.ConnectedSessionID != nil {
+		create.SetConnectedSessionID(*b.ConnectedSessionID)
+	}
+	if b.ConnectedAt != nil {
+		create.SetConnectedAt(*b.ConnectedAt)
 	}
 
 	created, err := create.Save(ctx)
@@ -637,7 +649,7 @@ func (s *ProjectStore) UpdateRuntimeBroker(ctx context.Context, b *store.Runtime
 			return mapError(err)
 		}
 
-		affected, err := s.client.RuntimeBroker.Update().
+		update := s.client.RuntimeBroker.Update().
 			Where(runtimebroker.IDEQ(uid), runtimebroker.LockVersionEQ(cur.LockVersion)).
 			SetName(b.Name).
 			SetSlug(b.Slug).
@@ -652,8 +664,23 @@ func (s *ProjectStore) UpdateRuntimeBroker(ctx context.Context, b *store.Runtime
 			SetEndpoint(b.Endpoint).
 			SetAutoProvide(b.AutoProvide).
 			SetUpdated(now).
-			AddLockVersion(1).
-			Save(ctx)
+			AddLockVersion(1)
+		if b.ConnectedHubID != nil {
+			update.SetConnectedHubID(*b.ConnectedHubID)
+		} else {
+			update.ClearConnectedHubID()
+		}
+		if b.ConnectedSessionID != nil {
+			update.SetConnectedSessionID(*b.ConnectedSessionID)
+		} else {
+			update.ClearConnectedSessionID()
+		}
+		if b.ConnectedAt != nil {
+			update.SetConnectedAt(*b.ConnectedAt)
+		} else {
+			update.ClearConnectedAt()
+		}
+		affected, err := update.Save(ctx)
 		if err != nil {
 			return mapError(err)
 		}
@@ -779,6 +806,108 @@ func (s *ProjectStore) UpdateRuntimeBrokerHeartbeat(ctx context.Context, id stri
 		}
 	}
 	return store.ErrVersionConflict
+}
+
+// ClaimRuntimeBrokerConnection records this hub instance as the owner of the
+// broker's live control-channel socket. The newest connection wins
+// (unconditional claim — mirrors a fresh socket replacing an old one): it sets
+// the affinity columns and, in the same CAS write, bumps status to online and
+// refreshes last_heartbeat. Uses the lock_version optimistic-concurrency loop,
+// like UpdateRuntimeBrokerHeartbeat.
+func (s *ProjectStore) ClaimRuntimeBrokerConnection(ctx context.Context, brokerID, hubInstanceID, sessionID string) error {
+	uid, err := parseUUID(brokerID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	for attempt := 0; attempt < maxCASRetries; attempt++ {
+		cur, err := s.client.RuntimeBroker.Get(ctx, uid)
+		if err != nil {
+			return mapError(err)
+		}
+		affected, err := s.client.RuntimeBroker.Update().
+			Where(runtimebroker.IDEQ(uid), runtimebroker.LockVersionEQ(cur.LockVersion)).
+			SetConnectedHubID(hubInstanceID).
+			SetConnectedSessionID(sessionID).
+			SetConnectedAt(now).
+			SetStatus(store.BrokerStatusOnline).
+			SetLastHeartbeat(now).
+			SetUpdated(now).
+			AddLockVersion(1).
+			Save(ctx)
+		if err != nil {
+			return mapError(err)
+		}
+		if affected == 1 {
+			return nil
+		}
+	}
+	return store.ErrVersionConflict
+}
+
+// ReleaseRuntimeBrokerConnection clears the broker's affinity ONLY IF it still
+// names (hubInstanceID, sessionID) — a compare-and-clear that fixes the
+// disconnect-race: a delayed disconnect from a stale owner/session must not
+// clobber a live owner. Returns cleared=true when this caller owned the
+// affinity and it was cleared; cleared=false (no-op) when affinity has already
+// moved (or was already clear). Does not change status — the caller decides
+// whether to stamp offline based on cleared.
+func (s *ProjectStore) ReleaseRuntimeBrokerConnection(ctx context.Context, brokerID, hubInstanceID, sessionID string) (bool, error) {
+	uid, err := parseUUID(brokerID)
+	if err != nil {
+		return false, err
+	}
+
+	now := time.Now()
+	for attempt := 0; attempt < maxCASRetries; attempt++ {
+		cur, err := s.client.RuntimeBroker.Get(ctx, uid)
+		if err != nil {
+			return false, mapError(err)
+		}
+		// Compare: only clear if affinity still names this exact (hub, session).
+		if cur.ConnectedHubID == nil || *cur.ConnectedHubID != hubInstanceID ||
+			cur.ConnectedSessionID == nil || *cur.ConnectedSessionID != sessionID {
+			return false, nil
+		}
+		affected, err := s.client.RuntimeBroker.Update().
+			Where(runtimebroker.IDEQ(uid), runtimebroker.LockVersionEQ(cur.LockVersion)).
+			ClearConnectedHubID().
+			ClearConnectedSessionID().
+			ClearConnectedAt().
+			SetUpdated(now).
+			AddLockVersion(1).
+			Save(ctx)
+		if err != nil {
+			return false, mapError(err)
+		}
+		if affected == 1 {
+			return true, nil
+		}
+		// affected==0: lock_version moved under us; re-read and re-evaluate the
+		// compare on the next iteration (affinity may have moved away).
+	}
+	return false, store.ErrVersionConflict
+}
+
+// ReapStaleBrokerAffinity clears affinity (connected_hub_id/connected_session_id/
+// connected_at) for brokers that still claim affinity but whose last_heartbeat
+// is older than staleBefore. Does not change broker status.
+func (s *ProjectStore) ReapStaleBrokerAffinity(ctx context.Context, staleBefore time.Time) (int, error) {
+	affected, err := s.client.RuntimeBroker.Update().
+		Where(
+			runtimebroker.ConnectedHubIDNotNil(),
+			runtimebroker.LastHeartbeatLT(staleBefore),
+		).
+		ClearConnectedHubID().
+		ClearConnectedSessionID().
+		ClearConnectedAt().
+		SetUpdated(time.Now()).
+		Save(ctx)
+	if err != nil {
+		return 0, mapError(err)
+	}
+	return affected, nil
 }
 
 // =============================================================================
