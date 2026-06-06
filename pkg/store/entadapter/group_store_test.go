@@ -1076,7 +1076,7 @@ func TestCheckDelegatedAccess_Enabled(t *testing.T) {
 	// Enable delegation on the test agent and set creator
 	_, err := gs.client.Agent.UpdateOneID(testAgentUID).
 		SetDelegationEnabled(true).
-		SetCreatorID(testUserUID).
+		SetCreatedBy(testUserUID).
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -1098,7 +1098,7 @@ func TestCheckDelegatedAccess_Disabled(t *testing.T) {
 
 	// Creator is set but delegation is disabled (default)
 	_, err := gs.client.Agent.UpdateOneID(testAgentUID).
-		SetCreatorID(testUserUID).
+		SetCreatedBy(testUserUID).
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -1126,7 +1126,7 @@ func TestCheckDelegatedAccess_SuspendedCreator(t *testing.T) {
 	// Enable delegation
 	_, err = gs.client.Agent.UpdateOneID(testAgentUID).
 		SetDelegationEnabled(true).
-		SetCreatorID(testUserUID).
+		SetCreatedBy(testUserUID).
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -1183,7 +1183,7 @@ func TestCheckDelegatedAccess_GroupCondition(t *testing.T) {
 	// Enable delegation and set creator
 	_, err := gs.client.Agent.UpdateOneID(testAgentUID).
 		SetDelegationEnabled(true).
-		SetCreatorID(testUserUID).
+		SetCreatedBy(testUserUID).
 		Save(ctx)
 	require.NoError(t, err)
 
@@ -1211,7 +1211,7 @@ func TestCheckDelegatedAccess_GroupCondition_NotMember(t *testing.T) {
 	// Enable delegation and set creator
 	_, err := gs.client.Agent.UpdateOneID(testAgentUID).
 		SetDelegationEnabled(true).
-		SetCreatorID(testUserUID).
+		SetCreatedBy(testUserUID).
 		Save(ctx)
 	require.NoError(t, err)
 

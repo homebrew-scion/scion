@@ -481,52 +481,6 @@ func LastSeenNotNil() predicate.User {
 	return predicate.User(sql.FieldNotNull(FieldLastSeen))
 }
 
-// HasCreatedAgents applies the HasEdge predicate on the "created_agents" edge.
-func HasCreatedAgents() predicate.User {
-	return predicate.User(func(s *sql.Selector) {
-		step := sqlgraph.NewStep(
-			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, CreatedAgentsTable, CreatedAgentsColumn),
-		)
-		sqlgraph.HasNeighbors(s, step)
-	})
-}
-
-// HasCreatedAgentsWith applies the HasEdge predicate on the "created_agents" edge with a given conditions (other predicates).
-func HasCreatedAgentsWith(preds ...predicate.Agent) predicate.User {
-	return predicate.User(func(s *sql.Selector) {
-		step := newCreatedAgentsStep()
-		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
-			for _, p := range preds {
-				p(s)
-			}
-		})
-	})
-}
-
-// HasOwnedAgents applies the HasEdge predicate on the "owned_agents" edge.
-func HasOwnedAgents() predicate.User {
-	return predicate.User(func(s *sql.Selector) {
-		step := sqlgraph.NewStep(
-			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, OwnedAgentsTable, OwnedAgentsColumn),
-		)
-		sqlgraph.HasNeighbors(s, step)
-	})
-}
-
-// HasOwnedAgentsWith applies the HasEdge predicate on the "owned_agents" edge with a given conditions (other predicates).
-func HasOwnedAgentsWith(preds ...predicate.Agent) predicate.User {
-	return predicate.User(func(s *sql.Selector) {
-		step := newOwnedAgentsStep()
-		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
-			for _, p := range preds {
-				p(s)
-			}
-		})
-	})
-}
-
 // HasOwnedGroups applies the HasEdge predicate on the "owned_groups" edge.
 func HasOwnedGroups() predicate.User {
 	return predicate.User(func(s *sql.Selector) {

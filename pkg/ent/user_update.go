@@ -11,7 +11,6 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/GoogleCloudPlatform/scion/pkg/ent/agent"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/group"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/policybinding"
@@ -162,36 +161,6 @@ func (_u *UserUpdate) ClearLastSeen() *UserUpdate {
 	return _u
 }
 
-// AddCreatedAgentIDs adds the "created_agents" edge to the Agent entity by IDs.
-func (_u *UserUpdate) AddCreatedAgentIDs(ids ...uuid.UUID) *UserUpdate {
-	_u.mutation.AddCreatedAgentIDs(ids...)
-	return _u
-}
-
-// AddCreatedAgents adds the "created_agents" edges to the Agent entity.
-func (_u *UserUpdate) AddCreatedAgents(v ...*Agent) *UserUpdate {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.AddCreatedAgentIDs(ids...)
-}
-
-// AddOwnedAgentIDs adds the "owned_agents" edge to the Agent entity by IDs.
-func (_u *UserUpdate) AddOwnedAgentIDs(ids ...uuid.UUID) *UserUpdate {
-	_u.mutation.AddOwnedAgentIDs(ids...)
-	return _u
-}
-
-// AddOwnedAgents adds the "owned_agents" edges to the Agent entity.
-func (_u *UserUpdate) AddOwnedAgents(v ...*Agent) *UserUpdate {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.AddOwnedAgentIDs(ids...)
-}
-
 // AddOwnedGroupIDs adds the "owned_groups" edge to the Group entity by IDs.
 func (_u *UserUpdate) AddOwnedGroupIDs(ids ...uuid.UUID) *UserUpdate {
 	_u.mutation.AddOwnedGroupIDs(ids...)
@@ -240,48 +209,6 @@ func (_u *UserUpdate) AddPolicyBindings(v ...*PolicyBinding) *UserUpdate {
 // Mutation returns the UserMutation object of the builder.
 func (_u *UserUpdate) Mutation() *UserMutation {
 	return _u.mutation
-}
-
-// ClearCreatedAgents clears all "created_agents" edges to the Agent entity.
-func (_u *UserUpdate) ClearCreatedAgents() *UserUpdate {
-	_u.mutation.ClearCreatedAgents()
-	return _u
-}
-
-// RemoveCreatedAgentIDs removes the "created_agents" edge to Agent entities by IDs.
-func (_u *UserUpdate) RemoveCreatedAgentIDs(ids ...uuid.UUID) *UserUpdate {
-	_u.mutation.RemoveCreatedAgentIDs(ids...)
-	return _u
-}
-
-// RemoveCreatedAgents removes "created_agents" edges to Agent entities.
-func (_u *UserUpdate) RemoveCreatedAgents(v ...*Agent) *UserUpdate {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.RemoveCreatedAgentIDs(ids...)
-}
-
-// ClearOwnedAgents clears all "owned_agents" edges to the Agent entity.
-func (_u *UserUpdate) ClearOwnedAgents() *UserUpdate {
-	_u.mutation.ClearOwnedAgents()
-	return _u
-}
-
-// RemoveOwnedAgentIDs removes the "owned_agents" edge to Agent entities by IDs.
-func (_u *UserUpdate) RemoveOwnedAgentIDs(ids ...uuid.UUID) *UserUpdate {
-	_u.mutation.RemoveOwnedAgentIDs(ids...)
-	return _u
-}
-
-// RemoveOwnedAgents removes "owned_agents" edges to Agent entities.
-func (_u *UserUpdate) RemoveOwnedAgents(v ...*Agent) *UserUpdate {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.RemoveOwnedAgentIDs(ids...)
 }
 
 // ClearOwnedGroups clears all "owned_groups" edges to the Group entity.
@@ -441,96 +368,6 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.LastSeenCleared() {
 		_spec.ClearField(user.FieldLastSeen, field.TypeTime)
-	}
-	if _u.mutation.CreatedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.RemovedCreatedAgentsIDs(); len(nodes) > 0 && !_u.mutation.CreatedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.CreatedAgentsIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
-	}
-	if _u.mutation.OwnedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.RemovedOwnedAgentsIDs(); len(nodes) > 0 && !_u.mutation.OwnedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.OwnedAgentsIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	if _u.mutation.OwnedGroupsCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -815,36 +652,6 @@ func (_u *UserUpdateOne) ClearLastSeen() *UserUpdateOne {
 	return _u
 }
 
-// AddCreatedAgentIDs adds the "created_agents" edge to the Agent entity by IDs.
-func (_u *UserUpdateOne) AddCreatedAgentIDs(ids ...uuid.UUID) *UserUpdateOne {
-	_u.mutation.AddCreatedAgentIDs(ids...)
-	return _u
-}
-
-// AddCreatedAgents adds the "created_agents" edges to the Agent entity.
-func (_u *UserUpdateOne) AddCreatedAgents(v ...*Agent) *UserUpdateOne {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.AddCreatedAgentIDs(ids...)
-}
-
-// AddOwnedAgentIDs adds the "owned_agents" edge to the Agent entity by IDs.
-func (_u *UserUpdateOne) AddOwnedAgentIDs(ids ...uuid.UUID) *UserUpdateOne {
-	_u.mutation.AddOwnedAgentIDs(ids...)
-	return _u
-}
-
-// AddOwnedAgents adds the "owned_agents" edges to the Agent entity.
-func (_u *UserUpdateOne) AddOwnedAgents(v ...*Agent) *UserUpdateOne {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.AddOwnedAgentIDs(ids...)
-}
-
 // AddOwnedGroupIDs adds the "owned_groups" edge to the Group entity by IDs.
 func (_u *UserUpdateOne) AddOwnedGroupIDs(ids ...uuid.UUID) *UserUpdateOne {
 	_u.mutation.AddOwnedGroupIDs(ids...)
@@ -893,48 +700,6 @@ func (_u *UserUpdateOne) AddPolicyBindings(v ...*PolicyBinding) *UserUpdateOne {
 // Mutation returns the UserMutation object of the builder.
 func (_u *UserUpdateOne) Mutation() *UserMutation {
 	return _u.mutation
-}
-
-// ClearCreatedAgents clears all "created_agents" edges to the Agent entity.
-func (_u *UserUpdateOne) ClearCreatedAgents() *UserUpdateOne {
-	_u.mutation.ClearCreatedAgents()
-	return _u
-}
-
-// RemoveCreatedAgentIDs removes the "created_agents" edge to Agent entities by IDs.
-func (_u *UserUpdateOne) RemoveCreatedAgentIDs(ids ...uuid.UUID) *UserUpdateOne {
-	_u.mutation.RemoveCreatedAgentIDs(ids...)
-	return _u
-}
-
-// RemoveCreatedAgents removes "created_agents" edges to Agent entities.
-func (_u *UserUpdateOne) RemoveCreatedAgents(v ...*Agent) *UserUpdateOne {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.RemoveCreatedAgentIDs(ids...)
-}
-
-// ClearOwnedAgents clears all "owned_agents" edges to the Agent entity.
-func (_u *UserUpdateOne) ClearOwnedAgents() *UserUpdateOne {
-	_u.mutation.ClearOwnedAgents()
-	return _u
-}
-
-// RemoveOwnedAgentIDs removes the "owned_agents" edge to Agent entities by IDs.
-func (_u *UserUpdateOne) RemoveOwnedAgentIDs(ids ...uuid.UUID) *UserUpdateOne {
-	_u.mutation.RemoveOwnedAgentIDs(ids...)
-	return _u
-}
-
-// RemoveOwnedAgents removes "owned_agents" edges to Agent entities.
-func (_u *UserUpdateOne) RemoveOwnedAgents(v ...*Agent) *UserUpdateOne {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _u.RemoveOwnedAgentIDs(ids...)
 }
 
 // ClearOwnedGroups clears all "owned_groups" edges to the Group entity.
@@ -1124,96 +889,6 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if _u.mutation.LastSeenCleared() {
 		_spec.ClearField(user.FieldLastSeen, field.TypeTime)
-	}
-	if _u.mutation.CreatedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.RemovedCreatedAgentsIDs(); len(nodes) > 0 && !_u.mutation.CreatedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.CreatedAgentsIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
-	}
-	if _u.mutation.OwnedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.RemovedOwnedAgentsIDs(); len(nodes) > 0 && !_u.mutation.OwnedAgentsCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.OwnedAgentsIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	if _u.mutation.OwnedGroupsCleared() {
 		edge := &sqlgraph.EdgeSpec{

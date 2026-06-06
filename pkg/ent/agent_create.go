@@ -16,7 +16,6 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/policybinding"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/project"
-	"github.com/GoogleCloudPlatform/scion/pkg/ent/user"
 	"github.com/google/uuid"
 )
 
@@ -503,30 +502,6 @@ func (_c *AgentCreate) SetProject(v *Project) *AgentCreate {
 	return _c.SetProjectID(v.ID)
 }
 
-// SetCreatorID sets the "creator" edge to the User entity by ID.
-func (_c *AgentCreate) SetCreatorID(id uuid.UUID) *AgentCreate {
-	_c.mutation.SetCreatorID(id)
-	return _c
-}
-
-// SetNillableCreatorID sets the "creator" edge to the User entity by ID if the given value is not nil.
-func (_c *AgentCreate) SetNillableCreatorID(id *uuid.UUID) *AgentCreate {
-	if id != nil {
-		_c = _c.SetCreatorID(*id)
-	}
-	return _c
-}
-
-// SetCreator sets the "creator" edge to the User entity.
-func (_c *AgentCreate) SetCreator(v *User) *AgentCreate {
-	return _c.SetCreatorID(v.ID)
-}
-
-// SetOwner sets the "owner" edge to the User entity.
-func (_c *AgentCreate) SetOwner(v *User) *AgentCreate {
-	return _c.SetOwnerID(v.ID)
-}
-
 // AddMembershipIDs adds the "memberships" edge to the GroupMembership entity by IDs.
 func (_c *AgentCreate) AddMembershipIDs(ids ...uuid.UUID) *AgentCreate {
 	_c.mutation.AddMembershipIDs(ids...)
@@ -749,6 +724,14 @@ func (_c *AgentCreate) createSpec() (*Agent, *sqlgraph.CreateSpec) {
 		_spec.SetField(agent.FieldStatus, field.TypeEnum, value)
 		_node.Status = value
 	}
+	if value, ok := _c.mutation.CreatedBy(); ok {
+		_spec.SetField(agent.FieldCreatedBy, field.TypeUUID, value)
+		_node.CreatedBy = &value
+	}
+	if value, ok := _c.mutation.OwnerID(); ok {
+		_spec.SetField(agent.FieldOwnerID, field.TypeUUID, value)
+		_node.OwnerID = &value
+	}
 	if value, ok := _c.mutation.DelegationEnabled(); ok {
 		_spec.SetField(agent.FieldDelegationEnabled, field.TypeBool, value)
 		_node.DelegationEnabled = value
@@ -880,40 +863,6 @@ func (_c *AgentCreate) createSpec() (*Agent, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.ProjectID = nodes[0]
-		_spec.Edges = append(_spec.Edges, edge)
-	}
-	if nodes := _c.mutation.CreatorIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.CreatorTable,
-			Columns: []string{agent.CreatorColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_node.CreatedBy = &nodes[0]
-		_spec.Edges = append(_spec.Edges, edge)
-	}
-	if nodes := _c.mutation.OwnerIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.OwnerTable,
-			Columns: []string{agent.OwnerColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_node.OwnerID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.MembershipsIDs(); len(nodes) > 0 {

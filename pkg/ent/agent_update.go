@@ -17,7 +17,6 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/policybinding"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/predicate"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/project"
-	"github.com/GoogleCloudPlatform/scion/pkg/ent/user"
 	"github.com/google/uuid"
 )
 
@@ -662,30 +661,6 @@ func (_u *AgentUpdate) SetProject(v *Project) *AgentUpdate {
 	return _u.SetProjectID(v.ID)
 }
 
-// SetCreatorID sets the "creator" edge to the User entity by ID.
-func (_u *AgentUpdate) SetCreatorID(id uuid.UUID) *AgentUpdate {
-	_u.mutation.SetCreatorID(id)
-	return _u
-}
-
-// SetNillableCreatorID sets the "creator" edge to the User entity by ID if the given value is not nil.
-func (_u *AgentUpdate) SetNillableCreatorID(id *uuid.UUID) *AgentUpdate {
-	if id != nil {
-		_u = _u.SetCreatorID(*id)
-	}
-	return _u
-}
-
-// SetCreator sets the "creator" edge to the User entity.
-func (_u *AgentUpdate) SetCreator(v *User) *AgentUpdate {
-	return _u.SetCreatorID(v.ID)
-}
-
-// SetOwner sets the "owner" edge to the User entity.
-func (_u *AgentUpdate) SetOwner(v *User) *AgentUpdate {
-	return _u.SetOwnerID(v.ID)
-}
-
 // AddMembershipIDs adds the "memberships" edge to the GroupMembership entity by IDs.
 func (_u *AgentUpdate) AddMembershipIDs(ids ...uuid.UUID) *AgentUpdate {
 	_u.mutation.AddMembershipIDs(ids...)
@@ -724,18 +699,6 @@ func (_u *AgentUpdate) Mutation() *AgentMutation {
 // ClearProject clears the "project" edge to the Project entity.
 func (_u *AgentUpdate) ClearProject() *AgentUpdate {
 	_u.mutation.ClearProject()
-	return _u
-}
-
-// ClearCreator clears the "creator" edge to the User entity.
-func (_u *AgentUpdate) ClearCreator() *AgentUpdate {
-	_u.mutation.ClearCreator()
-	return _u
-}
-
-// ClearOwner clears the "owner" edge to the User entity.
-func (_u *AgentUpdate) ClearOwner() *AgentUpdate {
-	_u.mutation.ClearOwner()
 	return _u
 }
 
@@ -866,6 +829,18 @@ func (_u *AgentUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(agent.FieldStatus, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.CreatedBy(); ok {
+		_spec.SetField(agent.FieldCreatedBy, field.TypeUUID, value)
+	}
+	if _u.mutation.CreatedByCleared() {
+		_spec.ClearField(agent.FieldCreatedBy, field.TypeUUID)
+	}
+	if value, ok := _u.mutation.OwnerID(); ok {
+		_spec.SetField(agent.FieldOwnerID, field.TypeUUID, value)
+	}
+	if _u.mutation.OwnerIDCleared() {
+		_spec.ClearField(agent.FieldOwnerID, field.TypeUUID)
 	}
 	if value, ok := _u.mutation.DelegationEnabled(); ok {
 		_spec.SetField(agent.FieldDelegationEnabled, field.TypeBool, value)
@@ -1047,64 +1022,6 @@ func (_u *AgentUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(project.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
-	}
-	if _u.mutation.CreatorCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.CreatorTable,
-			Columns: []string{agent.CreatorColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.CreatorIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.CreatorTable,
-			Columns: []string{agent.CreatorColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
-	}
-	if _u.mutation.OwnerCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.OwnerTable,
-			Columns: []string{agent.OwnerColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.OwnerIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.OwnerTable,
-			Columns: []string{agent.OwnerColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {
@@ -1850,30 +1767,6 @@ func (_u *AgentUpdateOne) SetProject(v *Project) *AgentUpdateOne {
 	return _u.SetProjectID(v.ID)
 }
 
-// SetCreatorID sets the "creator" edge to the User entity by ID.
-func (_u *AgentUpdateOne) SetCreatorID(id uuid.UUID) *AgentUpdateOne {
-	_u.mutation.SetCreatorID(id)
-	return _u
-}
-
-// SetNillableCreatorID sets the "creator" edge to the User entity by ID if the given value is not nil.
-func (_u *AgentUpdateOne) SetNillableCreatorID(id *uuid.UUID) *AgentUpdateOne {
-	if id != nil {
-		_u = _u.SetCreatorID(*id)
-	}
-	return _u
-}
-
-// SetCreator sets the "creator" edge to the User entity.
-func (_u *AgentUpdateOne) SetCreator(v *User) *AgentUpdateOne {
-	return _u.SetCreatorID(v.ID)
-}
-
-// SetOwner sets the "owner" edge to the User entity.
-func (_u *AgentUpdateOne) SetOwner(v *User) *AgentUpdateOne {
-	return _u.SetOwnerID(v.ID)
-}
-
 // AddMembershipIDs adds the "memberships" edge to the GroupMembership entity by IDs.
 func (_u *AgentUpdateOne) AddMembershipIDs(ids ...uuid.UUID) *AgentUpdateOne {
 	_u.mutation.AddMembershipIDs(ids...)
@@ -1912,18 +1805,6 @@ func (_u *AgentUpdateOne) Mutation() *AgentMutation {
 // ClearProject clears the "project" edge to the Project entity.
 func (_u *AgentUpdateOne) ClearProject() *AgentUpdateOne {
 	_u.mutation.ClearProject()
-	return _u
-}
-
-// ClearCreator clears the "creator" edge to the User entity.
-func (_u *AgentUpdateOne) ClearCreator() *AgentUpdateOne {
-	_u.mutation.ClearCreator()
-	return _u
-}
-
-// ClearOwner clears the "owner" edge to the User entity.
-func (_u *AgentUpdateOne) ClearOwner() *AgentUpdateOne {
-	_u.mutation.ClearOwner()
 	return _u
 }
 
@@ -2084,6 +1965,18 @@ func (_u *AgentUpdateOne) sqlSave(ctx context.Context) (_node *Agent, err error)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(agent.FieldStatus, field.TypeEnum, value)
+	}
+	if value, ok := _u.mutation.CreatedBy(); ok {
+		_spec.SetField(agent.FieldCreatedBy, field.TypeUUID, value)
+	}
+	if _u.mutation.CreatedByCleared() {
+		_spec.ClearField(agent.FieldCreatedBy, field.TypeUUID)
+	}
+	if value, ok := _u.mutation.OwnerID(); ok {
+		_spec.SetField(agent.FieldOwnerID, field.TypeUUID, value)
+	}
+	if _u.mutation.OwnerIDCleared() {
+		_spec.ClearField(agent.FieldOwnerID, field.TypeUUID)
 	}
 	if value, ok := _u.mutation.DelegationEnabled(); ok {
 		_spec.SetField(agent.FieldDelegationEnabled, field.TypeBool, value)
@@ -2265,64 +2158,6 @@ func (_u *AgentUpdateOne) sqlSave(ctx context.Context) (_node *Agent, err error)
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(project.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
-	}
-	if _u.mutation.CreatorCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.CreatorTable,
-			Columns: []string{agent.CreatorColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.CreatorIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.CreatorTable,
-			Columns: []string{agent.CreatorColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges.Add = append(_spec.Edges.Add, edge)
-	}
-	if _u.mutation.OwnerCleared() {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.OwnerTable,
-			Columns: []string{agent.OwnerColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
-			},
-		}
-		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
-	}
-	if nodes := _u.mutation.OwnerIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.M2O,
-			Inverse: true,
-			Table:   agent.OwnerTable,
-			Columns: []string{agent.OwnerColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(user.FieldID, field.TypeUUID),
 			},
 		}
 		for _, k := range nodes {

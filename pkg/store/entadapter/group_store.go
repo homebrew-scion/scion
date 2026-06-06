@@ -892,10 +892,8 @@ func (s *GroupStore) CheckDelegatedAccess(ctx context.Context, agentID string, c
 		return false, err
 	}
 
-	// Load agent with creator edge
 	a, err := s.client.Agent.Query().
 		Where(agent.IDEQ(uid)).
-		WithCreator().
 		Only(ctx)
 	if err != nil {
 		return false, mapError(err)
@@ -906,10 +904,19 @@ func (s *GroupStore) CheckDelegatedAccess(ctx context.Context, agentID string, c
 		return false, nil
 	}
 
-	// Check creator exists
-	creator := a.Edges.Creator
-	if creator == nil {
+	// created_by is a polymorphic principal reference: it may be a user or
+	// another agent. Delegation only flows from a *user* creator, so resolve
+	// the creator as a user by ID and bail out when there is none (no creator,
+	// or the creator is an agent rather than a user).
+	if a.CreatedBy == nil {
 		return false, nil
+	}
+	creator, err := s.client.User.Get(ctx, *a.CreatedBy)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return false, nil
+		}
+		return false, mapError(err)
 	}
 
 	// Suspended creators cannot be delegation sources

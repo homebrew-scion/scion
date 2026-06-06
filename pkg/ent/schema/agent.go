@@ -52,6 +52,12 @@ func (Agent) Fields() []ent.Field {
 		field.Enum("status").
 			Values("created", "provisioning", "cloning", "starting", "running", "suspended", "stopping", "stopped", "error").
 			Default("created"),
+		// created_by and owner_id are polymorphic *principal* references: the
+		// creator/owner may be a user OR another agent (an agent that spawns a
+		// sub-agent records its own ID here). They therefore carry no foreign-key
+		// edge to the users table — a User-typed FK rejected every agent-created
+		// sub-agent with a foreign-key violation. Consumers that need the user
+		// behind the ID must look it up by ID and tolerate "no such user".
 		field.UUID("created_by", uuid.UUID{}).
 			Optional().
 			Nillable(),
@@ -156,14 +162,6 @@ func (Agent) Edges() []ent.Edge {
 			Ref("agents").
 			Field("project_id").
 			Required().
-			Unique(),
-		edge.From("creator", User.Type).
-			Ref("created_agents").
-			Field("created_by").
-			Unique(),
-		edge.From("owner", User.Type).
-			Ref("owned_agents").
-			Field("owner_id").
 			Unique(),
 		edge.From("memberships", GroupMembership.Type).
 			Ref("agent"),

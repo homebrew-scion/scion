@@ -481,6 +481,26 @@ func CreatedByNotIn(vs ...uuid.UUID) predicate.Agent {
 	return predicate.Agent(sql.FieldNotIn(FieldCreatedBy, vs...))
 }
 
+// CreatedByGT applies the GT predicate on the "created_by" field.
+func CreatedByGT(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldGT(FieldCreatedBy, v))
+}
+
+// CreatedByGTE applies the GTE predicate on the "created_by" field.
+func CreatedByGTE(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldGTE(FieldCreatedBy, v))
+}
+
+// CreatedByLT applies the LT predicate on the "created_by" field.
+func CreatedByLT(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldLT(FieldCreatedBy, v))
+}
+
+// CreatedByLTE applies the LTE predicate on the "created_by" field.
+func CreatedByLTE(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldLTE(FieldCreatedBy, v))
+}
+
 // CreatedByIsNil applies the IsNil predicate on the "created_by" field.
 func CreatedByIsNil() predicate.Agent {
 	return predicate.Agent(sql.FieldIsNull(FieldCreatedBy))
@@ -509,6 +529,26 @@ func OwnerIDIn(vs ...uuid.UUID) predicate.Agent {
 // OwnerIDNotIn applies the NotIn predicate on the "owner_id" field.
 func OwnerIDNotIn(vs ...uuid.UUID) predicate.Agent {
 	return predicate.Agent(sql.FieldNotIn(FieldOwnerID, vs...))
+}
+
+// OwnerIDGT applies the GT predicate on the "owner_id" field.
+func OwnerIDGT(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldGT(FieldOwnerID, v))
+}
+
+// OwnerIDGTE applies the GTE predicate on the "owner_id" field.
+func OwnerIDGTE(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldGTE(FieldOwnerID, v))
+}
+
+// OwnerIDLT applies the LT predicate on the "owner_id" field.
+func OwnerIDLT(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldLT(FieldOwnerID, v))
+}
+
+// OwnerIDLTE applies the LTE predicate on the "owner_id" field.
+func OwnerIDLTE(v uuid.UUID) predicate.Agent {
+	return predicate.Agent(sql.FieldLTE(FieldOwnerID, v))
 }
 
 // OwnerIDIsNil applies the IsNil predicate on the "owner_id" field.
@@ -2036,52 +2076,6 @@ func HasProject() predicate.Agent {
 func HasProjectWith(preds ...predicate.Project) predicate.Agent {
 	return predicate.Agent(func(s *sql.Selector) {
 		step := newProjectStep()
-		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
-			for _, p := range preds {
-				p(s)
-			}
-		})
-	})
-}
-
-// HasCreator applies the HasEdge predicate on the "creator" edge.
-func HasCreator() predicate.Agent {
-	return predicate.Agent(func(s *sql.Selector) {
-		step := sqlgraph.NewStep(
-			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, true, CreatorTable, CreatorColumn),
-		)
-		sqlgraph.HasNeighbors(s, step)
-	})
-}
-
-// HasCreatorWith applies the HasEdge predicate on the "creator" edge with a given conditions (other predicates).
-func HasCreatorWith(preds ...predicate.User) predicate.Agent {
-	return predicate.Agent(func(s *sql.Selector) {
-		step := newCreatorStep()
-		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
-			for _, p := range preds {
-				p(s)
-			}
-		})
-	})
-}
-
-// HasOwner applies the HasEdge predicate on the "owner" edge.
-func HasOwner() predicate.Agent {
-	return predicate.Agent(func(s *sql.Selector) {
-		step := sqlgraph.NewStep(
-			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, true, OwnerTable, OwnerColumn),
-		)
-		sqlgraph.HasNeighbors(s, step)
-	})
-}
-
-// HasOwnerWith applies the HasEdge predicate on the "owner" edge with a given conditions (other predicates).
-func HasOwnerWith(preds ...predicate.User) predicate.Agent {
-	return predicate.Agent(func(s *sql.Selector) {
-		step := newOwnerStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

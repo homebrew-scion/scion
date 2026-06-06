@@ -12,7 +12,6 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/agent"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/project"
-	"github.com/GoogleCloudPlatform/scion/pkg/ent/user"
 	"github.com/google/uuid"
 )
 
@@ -103,17 +102,13 @@ type Agent struct {
 type AgentEdges struct {
 	// Project holds the value of the project edge.
 	Project *Project `json:"project,omitempty"`
-	// Creator holds the value of the creator edge.
-	Creator *User `json:"creator,omitempty"`
-	// Owner holds the value of the owner edge.
-	Owner *User `json:"owner,omitempty"`
 	// Memberships holds the value of the memberships edge.
 	Memberships []*GroupMembership `json:"memberships,omitempty"`
 	// PolicyBindings holds the value of the policy_bindings edge.
 	PolicyBindings []*PolicyBinding `json:"policy_bindings,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [5]bool
+	loadedTypes [3]bool
 }
 
 // ProjectOrErr returns the Project value or an error if the edge
@@ -127,32 +122,10 @@ func (e AgentEdges) ProjectOrErr() (*Project, error) {
 	return nil, &NotLoadedError{edge: "project"}
 }
 
-// CreatorOrErr returns the Creator value or an error if the edge
-// was not loaded in eager-loading, or loaded but was not found.
-func (e AgentEdges) CreatorOrErr() (*User, error) {
-	if e.Creator != nil {
-		return e.Creator, nil
-	} else if e.loadedTypes[1] {
-		return nil, &NotFoundError{label: user.Label}
-	}
-	return nil, &NotLoadedError{edge: "creator"}
-}
-
-// OwnerOrErr returns the Owner value or an error if the edge
-// was not loaded in eager-loading, or loaded but was not found.
-func (e AgentEdges) OwnerOrErr() (*User, error) {
-	if e.Owner != nil {
-		return e.Owner, nil
-	} else if e.loadedTypes[2] {
-		return nil, &NotFoundError{label: user.Label}
-	}
-	return nil, &NotLoadedError{edge: "owner"}
-}
-
 // MembershipsOrErr returns the Memberships value or an error if the edge
 // was not loaded in eager-loading.
 func (e AgentEdges) MembershipsOrErr() ([]*GroupMembership, error) {
-	if e.loadedTypes[3] {
+	if e.loadedTypes[1] {
 		return e.Memberships, nil
 	}
 	return nil, &NotLoadedError{edge: "memberships"}
@@ -161,7 +134,7 @@ func (e AgentEdges) MembershipsOrErr() ([]*GroupMembership, error) {
 // PolicyBindingsOrErr returns the PolicyBindings value or an error if the edge
 // was not loaded in eager-loading.
 func (e AgentEdges) PolicyBindingsOrErr() ([]*PolicyBinding, error) {
-	if e.loadedTypes[4] {
+	if e.loadedTypes[2] {
 		return e.PolicyBindings, nil
 	}
 	return nil, &NotLoadedError{edge: "policy_bindings"}
@@ -451,16 +424,6 @@ func (_m *Agent) Value(name string) (ent.Value, error) {
 // QueryProject queries the "project" edge of the Agent entity.
 func (_m *Agent) QueryProject() *ProjectQuery {
 	return NewAgentClient(_m.config).QueryProject(_m)
-}
-
-// QueryCreator queries the "creator" edge of the Agent entity.
-func (_m *Agent) QueryCreator() *UserQuery {
-	return NewAgentClient(_m.config).QueryCreator(_m)
-}
-
-// QueryOwner queries the "owner" edge of the Agent entity.
-func (_m *Agent) QueryOwner() *UserQuery {
-	return NewAgentClient(_m.config).QueryOwner(_m)
 }
 
 // QueryMemberships queries the "memberships" edge of the Agent entity.

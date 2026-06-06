@@ -13,7 +13,6 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/GoogleCloudPlatform/scion/pkg/ent/agent"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/group"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/policybinding"
@@ -29,8 +28,6 @@ type UserQuery struct {
 	order              []user.OrderOption
 	inters             []Interceptor
 	predicates         []predicate.User
-	withCreatedAgents  *AgentQuery
-	withOwnedAgents    *AgentQuery
 	withOwnedGroups    *GroupQuery
 	withMemberships    *GroupMembershipQuery
 	withPolicyBindings *PolicyBindingQuery
@@ -69,50 +66,6 @@ func (_q *UserQuery) Unique(unique bool) *UserQuery {
 func (_q *UserQuery) Order(o ...user.OrderOption) *UserQuery {
 	_q.order = append(_q.order, o...)
 	return _q
-}
-
-// QueryCreatedAgents chains the current query on the "created_agents" edge.
-func (_q *UserQuery) QueryCreatedAgents() *AgentQuery {
-	query := (&AgentClient{config: _q.config}).Query()
-	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
-		if err := _q.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		selector := _q.sqlQuery(ctx)
-		if err := selector.Err(); err != nil {
-			return nil, err
-		}
-		step := sqlgraph.NewStep(
-			sqlgraph.From(user.Table, user.FieldID, selector),
-			sqlgraph.To(agent.Table, agent.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, user.CreatedAgentsTable, user.CreatedAgentsColumn),
-		)
-		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
-		return fromU, nil
-	}
-	return query
-}
-
-// QueryOwnedAgents chains the current query on the "owned_agents" edge.
-func (_q *UserQuery) QueryOwnedAgents() *AgentQuery {
-	query := (&AgentClient{config: _q.config}).Query()
-	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
-		if err := _q.prepareQuery(ctx); err != nil {
-			return nil, err
-		}
-		selector := _q.sqlQuery(ctx)
-		if err := selector.Err(); err != nil {
-			return nil, err
-		}
-		step := sqlgraph.NewStep(
-			sqlgraph.From(user.Table, user.FieldID, selector),
-			sqlgraph.To(agent.Table, agent.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, user.OwnedAgentsTable, user.OwnedAgentsColumn),
-		)
-		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
-		return fromU, nil
-	}
-	return query
 }
 
 // QueryOwnedGroups chains the current query on the "owned_groups" edge.
@@ -373,8 +326,6 @@ func (_q *UserQuery) Clone() *UserQuery {
 		order:              append([]user.OrderOption{}, _q.order...),
 		inters:             append([]Interceptor{}, _q.inters...),
 		predicates:         append([]predicate.User{}, _q.predicates...),
-		withCreatedAgents:  _q.withCreatedAgents.Clone(),
-		withOwnedAgents:    _q.withOwnedAgents.Clone(),
 		withOwnedGroups:    _q.withOwnedGroups.Clone(),
 		withMemberships:    _q.withMemberships.Clone(),
 		withPolicyBindings: _q.withPolicyBindings.Clone(),
@@ -382,28 +333,6 @@ func (_q *UserQuery) Clone() *UserQuery {
 		sql:  _q.sql.Clone(),
 		path: _q.path,
 	}
-}
-
-// WithCreatedAgents tells the query-builder to eager-load the nodes that are connected to
-// the "created_agents" edge. The optional arguments are used to configure the query builder of the edge.
-func (_q *UserQuery) WithCreatedAgents(opts ...func(*AgentQuery)) *UserQuery {
-	query := (&AgentClient{config: _q.config}).Query()
-	for _, opt := range opts {
-		opt(query)
-	}
-	_q.withCreatedAgents = query
-	return _q
-}
-
-// WithOwnedAgents tells the query-builder to eager-load the nodes that are connected to
-// the "owned_agents" edge. The optional arguments are used to configure the query builder of the edge.
-func (_q *UserQuery) WithOwnedAgents(opts ...func(*AgentQuery)) *UserQuery {
-	query := (&AgentClient{config: _q.config}).Query()
-	for _, opt := range opts {
-		opt(query)
-	}
-	_q.withOwnedAgents = query
-	return _q
 }
 
 // WithOwnedGroups tells the query-builder to eager-load the nodes that are connected to
@@ -517,9 +446,7 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 	var (
 		nodes       = []*User{}
 		_spec       = _q.querySpec()
-		loadedTypes = [5]bool{
-			_q.withCreatedAgents != nil,
-			_q.withOwnedAgents != nil,
+		loadedTypes = [3]bool{
 			_q.withOwnedGroups != nil,
 			_q.withMemberships != nil,
 			_q.withPolicyBindings != nil,
@@ -546,20 +473,6 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 	if len(nodes) == 0 {
 		return nodes, nil
 	}
-	if query := _q.withCreatedAgents; query != nil {
-		if err := _q.loadCreatedAgents(ctx, query, nodes,
-			func(n *User) { n.Edges.CreatedAgents = []*Agent{} },
-			func(n *User, e *Agent) { n.Edges.CreatedAgents = append(n.Edges.CreatedAgents, e) }); err != nil {
-			return nil, err
-		}
-	}
-	if query := _q.withOwnedAgents; query != nil {
-		if err := _q.loadOwnedAgents(ctx, query, nodes,
-			func(n *User) { n.Edges.OwnedAgents = []*Agent{} },
-			func(n *User, e *Agent) { n.Edges.OwnedAgents = append(n.Edges.OwnedAgents, e) }); err != nil {
-			return nil, err
-		}
-	}
 	if query := _q.withOwnedGroups; query != nil {
 		if err := _q.loadOwnedGroups(ctx, query, nodes,
 			func(n *User) { n.Edges.OwnedGroups = []*Group{} },
@@ -584,72 +497,6 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 	return nodes, nil
 }
 
-func (_q *UserQuery) loadCreatedAgents(ctx context.Context, query *AgentQuery, nodes []*User, init func(*User), assign func(*User, *Agent)) error {
-	fks := make([]driver.Value, 0, len(nodes))
-	nodeids := make(map[uuid.UUID]*User)
-	for i := range nodes {
-		fks = append(fks, nodes[i].ID)
-		nodeids[nodes[i].ID] = nodes[i]
-		if init != nil {
-			init(nodes[i])
-		}
-	}
-	if len(query.ctx.Fields) > 0 {
-		query.ctx.AppendFieldOnce(agent.FieldCreatedBy)
-	}
-	query.Where(predicate.Agent(func(s *sql.Selector) {
-		s.Where(sql.InValues(s.C(user.CreatedAgentsColumn), fks...))
-	}))
-	neighbors, err := query.All(ctx)
-	if err != nil {
-		return err
-	}
-	for _, n := range neighbors {
-		fk := n.CreatedBy
-		if fk == nil {
-			return fmt.Errorf(`foreign-key "created_by" is nil for node %v`, n.ID)
-		}
-		node, ok := nodeids[*fk]
-		if !ok {
-			return fmt.Errorf(`unexpected referenced foreign-key "created_by" returned %v for node %v`, *fk, n.ID)
-		}
-		assign(node, n)
-	}
-	return nil
-}
-func (_q *UserQuery) loadOwnedAgents(ctx context.Context, query *AgentQuery, nodes []*User, init func(*User), assign func(*User, *Agent)) error {
-	fks := make([]driver.Value, 0, len(nodes))
-	nodeids := make(map[uuid.UUID]*User)
-	for i := range nodes {
-		fks = append(fks, nodes[i].ID)
-		nodeids[nodes[i].ID] = nodes[i]
-		if init != nil {
-			init(nodes[i])
-		}
-	}
-	if len(query.ctx.Fields) > 0 {
-		query.ctx.AppendFieldOnce(agent.FieldOwnerID)
-	}
-	query.Where(predicate.Agent(func(s *sql.Selector) {
-		s.Where(sql.InValues(s.C(user.OwnedAgentsColumn), fks...))
-	}))
-	neighbors, err := query.All(ctx)
-	if err != nil {
-		return err
-	}
-	for _, n := range neighbors {
-		fk := n.OwnerID
-		if fk == nil {
-			return fmt.Errorf(`foreign-key "owner_id" is nil for node %v`, n.ID)
-		}
-		node, ok := nodeids[*fk]
-		if !ok {
-			return fmt.Errorf(`unexpected referenced foreign-key "owner_id" returned %v for node %v`, *fk, n.ID)
-		}
-		assign(node, n)
-	}
-	return nil
-}
 func (_q *UserQuery) loadOwnedGroups(ctx context.Context, query *GroupQuery, nodes []*User, init func(*User), assign func(*User, *Group)) error {
 	fks := make([]driver.Value, 0, len(nodes))
 	nodeids := make(map[uuid.UUID]*User)

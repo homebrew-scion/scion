@@ -90,10 +90,6 @@ const (
 	FieldStateVersion = "state_version"
 	// EdgeProject holds the string denoting the project edge name in mutations.
 	EdgeProject = "project"
-	// EdgeCreator holds the string denoting the creator edge name in mutations.
-	EdgeCreator = "creator"
-	// EdgeOwner holds the string denoting the owner edge name in mutations.
-	EdgeOwner = "owner"
 	// EdgeMemberships holds the string denoting the memberships edge name in mutations.
 	EdgeMemberships = "memberships"
 	// EdgePolicyBindings holds the string denoting the policy_bindings edge name in mutations.
@@ -107,20 +103,6 @@ const (
 	ProjectInverseTable = "projects"
 	// ProjectColumn is the table column denoting the project relation/edge.
 	ProjectColumn = "project_id"
-	// CreatorTable is the table that holds the creator relation/edge.
-	CreatorTable = "agents"
-	// CreatorInverseTable is the table name for the User entity.
-	// It exists in this package in order to avoid circular dependency with the "user" package.
-	CreatorInverseTable = "users"
-	// CreatorColumn is the table column denoting the creator relation/edge.
-	CreatorColumn = "created_by"
-	// OwnerTable is the table that holds the owner relation/edge.
-	OwnerTable = "agents"
-	// OwnerInverseTable is the table name for the User entity.
-	// It exists in this package in order to avoid circular dependency with the "user" package.
-	OwnerInverseTable = "users"
-	// OwnerColumn is the table column denoting the owner relation/edge.
-	OwnerColumn = "owner_id"
 	// MembershipsTable is the table that holds the memberships relation/edge.
 	MembershipsTable = "group_memberships"
 	// MembershipsInverseTable is the table name for the GroupMembership entity.
@@ -430,20 +412,6 @@ func ByProjectField(field string, opts ...sql.OrderTermOption) OrderOption {
 	}
 }
 
-// ByCreatorField orders the results by creator field.
-func ByCreatorField(field string, opts ...sql.OrderTermOption) OrderOption {
-	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newCreatorStep(), sql.OrderByField(field, opts...))
-	}
-}
-
-// ByOwnerField orders the results by owner field.
-func ByOwnerField(field string, opts ...sql.OrderTermOption) OrderOption {
-	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newOwnerStep(), sql.OrderByField(field, opts...))
-	}
-}
-
 // ByMembershipsCount orders the results by memberships count.
 func ByMembershipsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -476,20 +444,6 @@ func newProjectStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(ProjectInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.M2O, true, ProjectTable, ProjectColumn),
-	)
-}
-func newCreatorStep() *sqlgraph.Step {
-	return sqlgraph.NewStep(
-		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(CreatorInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.M2O, true, CreatorTable, CreatorColumn),
-	)
-}
-func newOwnerStep() *sqlgraph.Step {
-	return sqlgraph.NewStep(
-		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(OwnerInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.M2O, true, OwnerTable, OwnerColumn),
 	)
 }
 func newMembershipsStep() *sqlgraph.Step {

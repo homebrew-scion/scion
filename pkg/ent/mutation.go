@@ -1488,6 +1488,8 @@ type AgentMutation struct {
 	name                   *string
 	template               *string
 	status                 *agent.Status
+	created_by             *uuid.UUID
+	owner_id               *uuid.UUID
 	delegation_enabled     *bool
 	visibility             *string
 	labels                 *map[string]string
@@ -1524,10 +1526,6 @@ type AgentMutation struct {
 	clearedFields          map[string]struct{}
 	project                *uuid.UUID
 	clearedproject         bool
-	creator                *uuid.UUID
-	clearedcreator         bool
-	owner                  *uuid.UUID
-	clearedowner           bool
 	memberships            map[uuid.UUID]struct{}
 	removedmemberships     map[uuid.UUID]struct{}
 	clearedmemberships     bool
@@ -1838,12 +1836,12 @@ func (m *AgentMutation) ResetStatus() {
 
 // SetCreatedBy sets the "created_by" field.
 func (m *AgentMutation) SetCreatedBy(u uuid.UUID) {
-	m.creator = &u
+	m.created_by = &u
 }
 
 // CreatedBy returns the value of the "created_by" field in the mutation.
 func (m *AgentMutation) CreatedBy() (r uuid.UUID, exists bool) {
-	v := m.creator
+	v := m.created_by
 	if v == nil {
 		return
 	}
@@ -1869,7 +1867,7 @@ func (m *AgentMutation) OldCreatedBy(ctx context.Context) (v *uuid.UUID, err err
 
 // ClearCreatedBy clears the value of the "created_by" field.
 func (m *AgentMutation) ClearCreatedBy() {
-	m.creator = nil
+	m.created_by = nil
 	m.clearedFields[agent.FieldCreatedBy] = struct{}{}
 }
 
@@ -1881,18 +1879,18 @@ func (m *AgentMutation) CreatedByCleared() bool {
 
 // ResetCreatedBy resets all changes to the "created_by" field.
 func (m *AgentMutation) ResetCreatedBy() {
-	m.creator = nil
+	m.created_by = nil
 	delete(m.clearedFields, agent.FieldCreatedBy)
 }
 
 // SetOwnerID sets the "owner_id" field.
 func (m *AgentMutation) SetOwnerID(u uuid.UUID) {
-	m.owner = &u
+	m.owner_id = &u
 }
 
 // OwnerID returns the value of the "owner_id" field in the mutation.
 func (m *AgentMutation) OwnerID() (r uuid.UUID, exists bool) {
-	v := m.owner
+	v := m.owner_id
 	if v == nil {
 		return
 	}
@@ -1918,7 +1916,7 @@ func (m *AgentMutation) OldOwnerID(ctx context.Context) (v *uuid.UUID, err error
 
 // ClearOwnerID clears the value of the "owner_id" field.
 func (m *AgentMutation) ClearOwnerID() {
-	m.owner = nil
+	m.owner_id = nil
 	m.clearedFields[agent.FieldOwnerID] = struct{}{}
 }
 
@@ -1930,7 +1928,7 @@ func (m *AgentMutation) OwnerIDCleared() bool {
 
 // ResetOwnerID resets all changes to the "owner_id" field.
 func (m *AgentMutation) ResetOwnerID() {
-	m.owner = nil
+	m.owner_id = nil
 	delete(m.clearedFields, agent.FieldOwnerID)
 }
 
@@ -3341,73 +3339,6 @@ func (m *AgentMutation) ResetProject() {
 	m.clearedproject = false
 }
 
-// SetCreatorID sets the "creator" edge to the User entity by id.
-func (m *AgentMutation) SetCreatorID(id uuid.UUID) {
-	m.creator = &id
-}
-
-// ClearCreator clears the "creator" edge to the User entity.
-func (m *AgentMutation) ClearCreator() {
-	m.clearedcreator = true
-	m.clearedFields[agent.FieldCreatedBy] = struct{}{}
-}
-
-// CreatorCleared reports if the "creator" edge to the User entity was cleared.
-func (m *AgentMutation) CreatorCleared() bool {
-	return m.CreatedByCleared() || m.clearedcreator
-}
-
-// CreatorID returns the "creator" edge ID in the mutation.
-func (m *AgentMutation) CreatorID() (id uuid.UUID, exists bool) {
-	if m.creator != nil {
-		return *m.creator, true
-	}
-	return
-}
-
-// CreatorIDs returns the "creator" edge IDs in the mutation.
-// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
-// CreatorID instead. It exists only for internal usage by the builders.
-func (m *AgentMutation) CreatorIDs() (ids []uuid.UUID) {
-	if id := m.creator; id != nil {
-		ids = append(ids, *id)
-	}
-	return
-}
-
-// ResetCreator resets all changes to the "creator" edge.
-func (m *AgentMutation) ResetCreator() {
-	m.creator = nil
-	m.clearedcreator = false
-}
-
-// ClearOwner clears the "owner" edge to the User entity.
-func (m *AgentMutation) ClearOwner() {
-	m.clearedowner = true
-	m.clearedFields[agent.FieldOwnerID] = struct{}{}
-}
-
-// OwnerCleared reports if the "owner" edge to the User entity was cleared.
-func (m *AgentMutation) OwnerCleared() bool {
-	return m.OwnerIDCleared() || m.clearedowner
-}
-
-// OwnerIDs returns the "owner" edge IDs in the mutation.
-// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
-// OwnerID instead. It exists only for internal usage by the builders.
-func (m *AgentMutation) OwnerIDs() (ids []uuid.UUID) {
-	if id := m.owner; id != nil {
-		ids = append(ids, *id)
-	}
-	return
-}
-
-// ResetOwner resets all changes to the "owner" edge.
-func (m *AgentMutation) ResetOwner() {
-	m.owner = nil
-	m.clearedowner = false
-}
-
 // AddMembershipIDs adds the "memberships" edge to the GroupMembership entity by ids.
 func (m *AgentMutation) AddMembershipIDs(ids ...uuid.UUID) {
 	if m.memberships == nil {
@@ -3566,10 +3497,10 @@ func (m *AgentMutation) Fields() []string {
 	if m.status != nil {
 		fields = append(fields, agent.FieldStatus)
 	}
-	if m.creator != nil {
+	if m.created_by != nil {
 		fields = append(fields, agent.FieldCreatedBy)
 	}
-	if m.owner != nil {
+	if m.owner_id != nil {
 		fields = append(fields, agent.FieldOwnerID)
 	}
 	if m.delegation_enabled != nil {
@@ -4424,15 +4355,9 @@ func (m *AgentMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *AgentMutation) AddedEdges() []string {
-	edges := make([]string, 0, 5)
+	edges := make([]string, 0, 3)
 	if m.project != nil {
 		edges = append(edges, agent.EdgeProject)
-	}
-	if m.creator != nil {
-		edges = append(edges, agent.EdgeCreator)
-	}
-	if m.owner != nil {
-		edges = append(edges, agent.EdgeOwner)
 	}
 	if m.memberships != nil {
 		edges = append(edges, agent.EdgeMemberships)
@@ -4449,14 +4374,6 @@ func (m *AgentMutation) AddedIDs(name string) []ent.Value {
 	switch name {
 	case agent.EdgeProject:
 		if id := m.project; id != nil {
-			return []ent.Value{*id}
-		}
-	case agent.EdgeCreator:
-		if id := m.creator; id != nil {
-			return []ent.Value{*id}
-		}
-	case agent.EdgeOwner:
-		if id := m.owner; id != nil {
 			return []ent.Value{*id}
 		}
 	case agent.EdgeMemberships:
@@ -4477,7 +4394,7 @@ func (m *AgentMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *AgentMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 5)
+	edges := make([]string, 0, 3)
 	if m.removedmemberships != nil {
 		edges = append(edges, agent.EdgeMemberships)
 	}
@@ -4509,15 +4426,9 @@ func (m *AgentMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *AgentMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 5)
+	edges := make([]string, 0, 3)
 	if m.clearedproject {
 		edges = append(edges, agent.EdgeProject)
-	}
-	if m.clearedcreator {
-		edges = append(edges, agent.EdgeCreator)
-	}
-	if m.clearedowner {
-		edges = append(edges, agent.EdgeOwner)
 	}
 	if m.clearedmemberships {
 		edges = append(edges, agent.EdgeMemberships)
@@ -4534,10 +4445,6 @@ func (m *AgentMutation) EdgeCleared(name string) bool {
 	switch name {
 	case agent.EdgeProject:
 		return m.clearedproject
-	case agent.EdgeCreator:
-		return m.clearedcreator
-	case agent.EdgeOwner:
-		return m.clearedowner
 	case agent.EdgeMemberships:
 		return m.clearedmemberships
 	case agent.EdgePolicyBindings:
@@ -4553,12 +4460,6 @@ func (m *AgentMutation) ClearEdge(name string) error {
 	case agent.EdgeProject:
 		m.ClearProject()
 		return nil
-	case agent.EdgeCreator:
-		m.ClearCreator()
-		return nil
-	case agent.EdgeOwner:
-		m.ClearOwner()
-		return nil
 	}
 	return fmt.Errorf("unknown Agent unique edge %s", name)
 }
@@ -4569,12 +4470,6 @@ func (m *AgentMutation) ResetEdge(name string) error {
 	switch name {
 	case agent.EdgeProject:
 		m.ResetProject()
-		return nil
-	case agent.EdgeCreator:
-		m.ResetCreator()
-		return nil
-	case agent.EdgeOwner:
-		m.ResetOwner()
 		return nil
 	case agent.EdgeMemberships:
 		m.ResetMemberships()
@@ -31667,12 +31562,6 @@ type UserMutation struct {
 	last_login             *time.Time
 	last_seen              *time.Time
 	clearedFields          map[string]struct{}
-	created_agents         map[uuid.UUID]struct{}
-	removedcreated_agents  map[uuid.UUID]struct{}
-	clearedcreated_agents  bool
-	owned_agents           map[uuid.UUID]struct{}
-	removedowned_agents    map[uuid.UUID]struct{}
-	clearedowned_agents    bool
 	owned_groups           map[uuid.UUID]struct{}
 	removedowned_groups    map[uuid.UUID]struct{}
 	clearedowned_groups    bool
@@ -32167,114 +32056,6 @@ func (m *UserMutation) ResetLastSeen() {
 	delete(m.clearedFields, user.FieldLastSeen)
 }
 
-// AddCreatedAgentIDs adds the "created_agents" edge to the Agent entity by ids.
-func (m *UserMutation) AddCreatedAgentIDs(ids ...uuid.UUID) {
-	if m.created_agents == nil {
-		m.created_agents = make(map[uuid.UUID]struct{})
-	}
-	for i := range ids {
-		m.created_agents[ids[i]] = struct{}{}
-	}
-}
-
-// ClearCreatedAgents clears the "created_agents" edge to the Agent entity.
-func (m *UserMutation) ClearCreatedAgents() {
-	m.clearedcreated_agents = true
-}
-
-// CreatedAgentsCleared reports if the "created_agents" edge to the Agent entity was cleared.
-func (m *UserMutation) CreatedAgentsCleared() bool {
-	return m.clearedcreated_agents
-}
-
-// RemoveCreatedAgentIDs removes the "created_agents" edge to the Agent entity by IDs.
-func (m *UserMutation) RemoveCreatedAgentIDs(ids ...uuid.UUID) {
-	if m.removedcreated_agents == nil {
-		m.removedcreated_agents = make(map[uuid.UUID]struct{})
-	}
-	for i := range ids {
-		delete(m.created_agents, ids[i])
-		m.removedcreated_agents[ids[i]] = struct{}{}
-	}
-}
-
-// RemovedCreatedAgents returns the removed IDs of the "created_agents" edge to the Agent entity.
-func (m *UserMutation) RemovedCreatedAgentsIDs() (ids []uuid.UUID) {
-	for id := range m.removedcreated_agents {
-		ids = append(ids, id)
-	}
-	return
-}
-
-// CreatedAgentsIDs returns the "created_agents" edge IDs in the mutation.
-func (m *UserMutation) CreatedAgentsIDs() (ids []uuid.UUID) {
-	for id := range m.created_agents {
-		ids = append(ids, id)
-	}
-	return
-}
-
-// ResetCreatedAgents resets all changes to the "created_agents" edge.
-func (m *UserMutation) ResetCreatedAgents() {
-	m.created_agents = nil
-	m.clearedcreated_agents = false
-	m.removedcreated_agents = nil
-}
-
-// AddOwnedAgentIDs adds the "owned_agents" edge to the Agent entity by ids.
-func (m *UserMutation) AddOwnedAgentIDs(ids ...uuid.UUID) {
-	if m.owned_agents == nil {
-		m.owned_agents = make(map[uuid.UUID]struct{})
-	}
-	for i := range ids {
-		m.owned_agents[ids[i]] = struct{}{}
-	}
-}
-
-// ClearOwnedAgents clears the "owned_agents" edge to the Agent entity.
-func (m *UserMutation) ClearOwnedAgents() {
-	m.clearedowned_agents = true
-}
-
-// OwnedAgentsCleared reports if the "owned_agents" edge to the Agent entity was cleared.
-func (m *UserMutation) OwnedAgentsCleared() bool {
-	return m.clearedowned_agents
-}
-
-// RemoveOwnedAgentIDs removes the "owned_agents" edge to the Agent entity by IDs.
-func (m *UserMutation) RemoveOwnedAgentIDs(ids ...uuid.UUID) {
-	if m.removedowned_agents == nil {
-		m.removedowned_agents = make(map[uuid.UUID]struct{})
-	}
-	for i := range ids {
-		delete(m.owned_agents, ids[i])
-		m.removedowned_agents[ids[i]] = struct{}{}
-	}
-}
-
-// RemovedOwnedAgents returns the removed IDs of the "owned_agents" edge to the Agent entity.
-func (m *UserMutation) RemovedOwnedAgentsIDs() (ids []uuid.UUID) {
-	for id := range m.removedowned_agents {
-		ids = append(ids, id)
-	}
-	return
-}
-
-// OwnedAgentsIDs returns the "owned_agents" edge IDs in the mutation.
-func (m *UserMutation) OwnedAgentsIDs() (ids []uuid.UUID) {
-	for id := range m.owned_agents {
-		ids = append(ids, id)
-	}
-	return
-}
-
-// ResetOwnedAgents resets all changes to the "owned_agents" edge.
-func (m *UserMutation) ResetOwnedAgents() {
-	m.owned_agents = nil
-	m.clearedowned_agents = false
-	m.removedowned_agents = nil
-}
-
 // AddOwnedGroupIDs adds the "owned_groups" edge to the Group entity by ids.
 func (m *UserMutation) AddOwnedGroupIDs(ids ...uuid.UUID) {
 	if m.owned_groups == nil {
@@ -32733,13 +32514,7 @@ func (m *UserMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *UserMutation) AddedEdges() []string {
-	edges := make([]string, 0, 5)
-	if m.created_agents != nil {
-		edges = append(edges, user.EdgeCreatedAgents)
-	}
-	if m.owned_agents != nil {
-		edges = append(edges, user.EdgeOwnedAgents)
-	}
+	edges := make([]string, 0, 3)
 	if m.owned_groups != nil {
 		edges = append(edges, user.EdgeOwnedGroups)
 	}
@@ -32756,18 +32531,6 @@ func (m *UserMutation) AddedEdges() []string {
 // name in this mutation.
 func (m *UserMutation) AddedIDs(name string) []ent.Value {
 	switch name {
-	case user.EdgeCreatedAgents:
-		ids := make([]ent.Value, 0, len(m.created_agents))
-		for id := range m.created_agents {
-			ids = append(ids, id)
-		}
-		return ids
-	case user.EdgeOwnedAgents:
-		ids := make([]ent.Value, 0, len(m.owned_agents))
-		for id := range m.owned_agents {
-			ids = append(ids, id)
-		}
-		return ids
 	case user.EdgeOwnedGroups:
 		ids := make([]ent.Value, 0, len(m.owned_groups))
 		for id := range m.owned_groups {
@@ -32792,13 +32555,7 @@ func (m *UserMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *UserMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 5)
-	if m.removedcreated_agents != nil {
-		edges = append(edges, user.EdgeCreatedAgents)
-	}
-	if m.removedowned_agents != nil {
-		edges = append(edges, user.EdgeOwnedAgents)
-	}
+	edges := make([]string, 0, 3)
 	if m.removedowned_groups != nil {
 		edges = append(edges, user.EdgeOwnedGroups)
 	}
@@ -32815,18 +32572,6 @@ func (m *UserMutation) RemovedEdges() []string {
 // the given name in this mutation.
 func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 	switch name {
-	case user.EdgeCreatedAgents:
-		ids := make([]ent.Value, 0, len(m.removedcreated_agents))
-		for id := range m.removedcreated_agents {
-			ids = append(ids, id)
-		}
-		return ids
-	case user.EdgeOwnedAgents:
-		ids := make([]ent.Value, 0, len(m.removedowned_agents))
-		for id := range m.removedowned_agents {
-			ids = append(ids, id)
-		}
-		return ids
 	case user.EdgeOwnedGroups:
 		ids := make([]ent.Value, 0, len(m.removedowned_groups))
 		for id := range m.removedowned_groups {
@@ -32851,13 +32596,7 @@ func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *UserMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 5)
-	if m.clearedcreated_agents {
-		edges = append(edges, user.EdgeCreatedAgents)
-	}
-	if m.clearedowned_agents {
-		edges = append(edges, user.EdgeOwnedAgents)
-	}
+	edges := make([]string, 0, 3)
 	if m.clearedowned_groups {
 		edges = append(edges, user.EdgeOwnedGroups)
 	}
@@ -32874,10 +32613,6 @@ func (m *UserMutation) ClearedEdges() []string {
 // was cleared in this mutation.
 func (m *UserMutation) EdgeCleared(name string) bool {
 	switch name {
-	case user.EdgeCreatedAgents:
-		return m.clearedcreated_agents
-	case user.EdgeOwnedAgents:
-		return m.clearedowned_agents
 	case user.EdgeOwnedGroups:
 		return m.clearedowned_groups
 	case user.EdgeMemberships:
@@ -32900,12 +32635,6 @@ func (m *UserMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *UserMutation) ResetEdge(name string) error {
 	switch name {
-	case user.EdgeCreatedAgents:
-		m.ResetCreatedAgents()
-		return nil
-	case user.EdgeOwnedAgents:
-		m.ResetOwnedAgents()
-		return nil
 	case user.EdgeOwnedGroups:
 		m.ResetOwnedGroups()
 		return nil

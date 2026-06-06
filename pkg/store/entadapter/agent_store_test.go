@@ -113,6 +113,31 @@ func TestAgentStore_CRUD(t *testing.T) {
 	assert.ErrorIs(t, s.DeleteAgent(ctx, a.ID), store.ErrNotFound)
 }
 
+// TestAgentStore_CreatedByNonUserPrincipal guards against the regression where
+// created_by/owner_id carried a foreign-key edge to the users table. When an
+// agent creates a sub-agent, those columns hold the *creating agent's* ID, which
+// has no users-table row — under the FK that produced a constraint violation
+// (mapped to ErrInvalidInput → a 400 "Invalid input" on agent creation). They
+// are polymorphic principal references and must accept an arbitrary principal ID.
+func TestAgentStore_CreatedByNonUserPrincipal(t *testing.T) {
+	ctx := context.Background()
+	s, projectID := newTestAgentStore(t)
+
+	// A principal ID that is NOT a user (e.g. another agent). No users row exists.
+	creatorPrincipalID := uuid.NewString()
+
+	a := makeAgent(projectID, "sub-agent")
+	a.CreatedBy = creatorPrincipalID
+	a.OwnerID = creatorPrincipalID
+	require.NoError(t, s.CreateAgent(ctx, a),
+		"creating an agent owned by a non-user principal must not violate a foreign key")
+
+	got, err := s.GetAgent(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, creatorPrincipalID, got.CreatedBy)
+	assert.Equal(t, creatorPrincipalID, got.OwnerID)
+}
+
 // TestAgentStore_AncestryFilter exercises the dialect-switched json_each /
 // json_array_elements_text membership filter.
 func TestAgentStore_AncestryFilter(t *testing.T) {

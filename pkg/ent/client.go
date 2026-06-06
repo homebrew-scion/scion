@@ -733,38 +733,6 @@ func (c *AgentClient) QueryProject(_m *Agent) *ProjectQuery {
 	return query
 }
 
-// QueryCreator queries the creator edge of a Agent.
-func (c *AgentClient) QueryCreator(_m *Agent) *UserQuery {
-	query := (&UserClient{config: c.config}).Query()
-	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
-		id := _m.ID
-		step := sqlgraph.NewStep(
-			sqlgraph.From(agent.Table, agent.FieldID, id),
-			sqlgraph.To(user.Table, user.FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, true, agent.CreatorTable, agent.CreatorColumn),
-		)
-		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
-		return fromV, nil
-	}
-	return query
-}
-
-// QueryOwner queries the owner edge of a Agent.
-func (c *AgentClient) QueryOwner(_m *Agent) *UserQuery {
-	query := (&UserClient{config: c.config}).Query()
-	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
-		id := _m.ID
-		step := sqlgraph.NewStep(
-			sqlgraph.From(agent.Table, agent.FieldID, id),
-			sqlgraph.To(user.Table, user.FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, true, agent.OwnerTable, agent.OwnerColumn),
-		)
-		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
-		return fromV, nil
-	}
-	return query
-}
-
 // QueryMemberships queries the memberships edge of a Agent.
 func (c *AgentClient) QueryMemberships(_m *Agent) *GroupMembershipQuery {
 	query := (&GroupMembershipClient{config: c.config}).Query()
@@ -4727,38 +4695,6 @@ func (c *UserClient) GetX(ctx context.Context, id uuid.UUID) *User {
 		panic(err)
 	}
 	return obj
-}
-
-// QueryCreatedAgents queries the created_agents edge of a User.
-func (c *UserClient) QueryCreatedAgents(_m *User) *AgentQuery {
-	query := (&AgentClient{config: c.config}).Query()
-	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
-		id := _m.ID
-		step := sqlgraph.NewStep(
-			sqlgraph.From(user.Table, user.FieldID, id),
-			sqlgraph.To(agent.Table, agent.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, user.CreatedAgentsTable, user.CreatedAgentsColumn),
-		)
-		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
-		return fromV, nil
-	}
-	return query
-}
-
-// QueryOwnedAgents queries the owned_agents edge of a User.
-func (c *UserClient) QueryOwnedAgents(_m *User) *AgentQuery {
-	query := (&AgentClient{config: c.config}).Query()
-	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
-		id := _m.ID
-		step := sqlgraph.NewStep(
-			sqlgraph.From(user.Table, user.FieldID, id),
-			sqlgraph.To(agent.Table, agent.FieldID),
-			sqlgraph.Edge(sqlgraph.O2M, false, user.OwnedAgentsTable, user.OwnedAgentsColumn),
-		)
-		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
-		return fromV, nil
-	}
-	return query
 }
 
 // QueryOwnedGroups queries the owned_groups edge of a User.

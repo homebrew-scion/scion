@@ -12,7 +12,6 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/GoogleCloudPlatform/scion/pkg/ent/agent"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/group"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/policybinding"
@@ -143,36 +142,6 @@ func (_c *UserCreate) SetNillableID(v *uuid.UUID) *UserCreate {
 		_c.SetID(*v)
 	}
 	return _c
-}
-
-// AddCreatedAgentIDs adds the "created_agents" edge to the Agent entity by IDs.
-func (_c *UserCreate) AddCreatedAgentIDs(ids ...uuid.UUID) *UserCreate {
-	_c.mutation.AddCreatedAgentIDs(ids...)
-	return _c
-}
-
-// AddCreatedAgents adds the "created_agents" edges to the Agent entity.
-func (_c *UserCreate) AddCreatedAgents(v ...*Agent) *UserCreate {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _c.AddCreatedAgentIDs(ids...)
-}
-
-// AddOwnedAgentIDs adds the "owned_agents" edge to the Agent entity by IDs.
-func (_c *UserCreate) AddOwnedAgentIDs(ids ...uuid.UUID) *UserCreate {
-	_c.mutation.AddOwnedAgentIDs(ids...)
-	return _c
-}
-
-// AddOwnedAgents adds the "owned_agents" edges to the Agent entity.
-func (_c *UserCreate) AddOwnedAgents(v ...*Agent) *UserCreate {
-	ids := make([]uuid.UUID, len(v))
-	for i := range v {
-		ids[i] = v[i].ID
-	}
-	return _c.AddOwnedAgentIDs(ids...)
 }
 
 // AddOwnedGroupIDs adds the "owned_groups" edge to the Group entity by IDs.
@@ -376,38 +345,6 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LastSeen(); ok {
 		_spec.SetField(user.FieldLastSeen, field.TypeTime, value)
 		_node.LastSeen = &value
-	}
-	if nodes := _c.mutation.CreatedAgentsIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.CreatedAgentsTable,
-			Columns: []string{user.CreatedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges = append(_spec.Edges, edge)
-	}
-	if nodes := _c.mutation.OwnedAgentsIDs(); len(nodes) > 0 {
-		edge := &sqlgraph.EdgeSpec{
-			Rel:     sqlgraph.O2M,
-			Inverse: false,
-			Table:   user.OwnedAgentsTable,
-			Columns: []string{user.OwnedAgentsColumn},
-			Bidi:    false,
-			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(agent.FieldID, field.TypeUUID),
-			},
-		}
-		for _, k := range nodes {
-			edge.Target.Nodes = append(edge.Target.Nodes, k)
-		}
-		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.OwnedGroupsIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{

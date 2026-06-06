@@ -451,9 +451,11 @@ func TestAgentCreateAgent_WithScope(t *testing.T) {
 	project.DefaultRuntimeBrokerID = broker.ID
 	require.NoError(t, s.UpdateProject(ctx, project))
 
-	// Create the calling agent. The created sub-agent's created_by/owner_id FK
-	// references the users table, so seed a user sharing the caller's ID.
-	permSeedUser(t, ctx, s, tid("agent-caller"))
+	// Create the calling agent. Deliberately do NOT seed a matching user row:
+	// in production the creator is an agent whose ID has no users-table entry,
+	// and created_by/owner_id must accept that agent ID as a polymorphic
+	// principal reference. (Regression guard for the agent-created sub-agent
+	// FK-violation bug.)
 	callingAgent := &store.Agent{
 		ID:        tid("agent-caller"),
 		Slug:      tid("agent-caller"),
@@ -2743,8 +2745,7 @@ func TestCreateAgent_NotifyCreatesSubscription(t *testing.T) {
 	require.NoError(t, s.UpdateProject(ctx, project))
 
 	// Create the calling agent (the one that will subscribe to notifications).
-	// The created sub-agent's created_by/owner_id FK references the users table.
-	permSeedUser(t, ctx, s, tid("agent-lead"))
+	// No matching user row: the agent ID stands on its own as created_by/owner_id.
 	callingAgent := &store.Agent{
 		ID:        tid("agent-lead"),
 		Slug:      "lead-agent",
@@ -2882,7 +2883,6 @@ func TestCreateAgent_NotifySubscriptionCascadeOnDelete(t *testing.T) {
 	project.DefaultRuntimeBrokerID = broker.ID
 	require.NoError(t, s.UpdateProject(ctx, project))
 
-	permSeedUser(t, ctx, s, tid("agent-cascade-lead"))
 	callingAgent := &store.Agent{
 		ID:        tid("agent-cascade-lead"),
 		Slug:      "cascade-lead",

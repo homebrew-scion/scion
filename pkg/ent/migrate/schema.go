@@ -41,6 +41,8 @@ var (
 		{Name: "name", Type: field.TypeString},
 		{Name: "template", Type: field.TypeString, Nullable: true},
 		{Name: "status", Type: field.TypeEnum, Enums: []string{"created", "provisioning", "cloning", "starting", "running", "suspended", "stopping", "stopped", "error"}, Default: "created"},
+		{Name: "created_by", Type: field.TypeUUID, Nullable: true},
+		{Name: "owner_id", Type: field.TypeUUID, Nullable: true},
 		{Name: "delegation_enabled", Type: field.TypeBool, Default: false},
 		{Name: "visibility", Type: field.TypeString, Default: "private"},
 		{Name: "labels", Type: field.TypeJSON, Nullable: true},
@@ -71,8 +73,6 @@ var (
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
 		{Name: "state_version", Type: field.TypeInt64, Default: 1},
 		{Name: "project_id", Type: field.TypeUUID},
-		{Name: "created_by", Type: field.TypeUUID, Nullable: true},
-		{Name: "owner_id", Type: field.TypeUUID, Nullable: true},
 	}
 	// AgentsTable holds the schema information for the "agents" table.
 	AgentsTable = &schema.Table{
@@ -82,28 +82,16 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "agents_projects_agents",
-				Columns:    []*schema.Column{AgentsColumns[34]},
+				Columns:    []*schema.Column{AgentsColumns[36]},
 				RefColumns: []*schema.Column{ProjectsColumns[0]},
 				OnDelete:   schema.NoAction,
-			},
-			{
-				Symbol:     "agents_users_created_agents",
-				Columns:    []*schema.Column{AgentsColumns[35]},
-				RefColumns: []*schema.Column{UsersColumns[0]},
-				OnDelete:   schema.SetNull,
-			},
-			{
-				Symbol:     "agents_users_owned_agents",
-				Columns:    []*schema.Column{AgentsColumns[36]},
-				RefColumns: []*schema.Column{UsersColumns[0]},
-				OnDelete:   schema.SetNull,
 			},
 		},
 		Indexes: []*schema.Index{
 			{
 				Name:    "agent_slug_project_id",
 				Unique:  true,
-				Columns: []*schema.Column{AgentsColumns[1], AgentsColumns[34]},
+				Columns: []*schema.Column{AgentsColumns[1], AgentsColumns[36]},
 			},
 		},
 	}
@@ -1091,8 +1079,6 @@ var (
 
 func init() {
 	AgentsTable.ForeignKeys[0].RefTable = ProjectsTable
-	AgentsTable.ForeignKeys[1].RefTable = UsersTable
-	AgentsTable.ForeignKeys[2].RefTable = UsersTable
 	AllowListTable.Annotation = &entsql.Annotation{
 		Table: "allow_list",
 	}

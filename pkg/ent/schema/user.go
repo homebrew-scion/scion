@@ -86,8 +86,9 @@ func (User) Indexes() []ent.Index {
 // Edges of the User.
 func (User) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.To("created_agents", Agent.Type),
-		edge.To("owned_agents", Agent.Type),
+		// Note: agent.created_by / agent.owner_id are polymorphic principal
+		// references (user or agent), so there is intentionally no
+		// created_agents / owned_agents edge back to Agent. See pkg/ent/schema/agent.go.
 		edge.To("owned_groups", Group.Type),
 		edge.From("memberships", GroupMembership.Type).
 			Ref("user"),
