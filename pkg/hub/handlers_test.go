@@ -181,18 +181,21 @@ func TestAgentList(t *testing.T) {
 	srv, s := testServer(t)
 	ctx := context.Background()
 
-	// Create a project first (agents reference projects)
+	// Create a project owned by the dev user (list is membership-gated)
 	project := &store.Project{
 		ID:        tid("project_test123"),
 		Slug:      "test-project",
 		Name:      "Test Project",
 		GitRemote: "https://github.com/test/repo",
+		OwnerID:   DevUserID,
+		CreatedBy: DevUserID,
 		Created:   time.Now(),
 		Updated:   time.Now(),
 	}
 	if err := s.CreateProject(ctx, project); err != nil {
 		t.Fatalf("failed to create project: %v", err)
 	}
+	srv.createProjectMembersGroupAndPolicy(ctx, project)
 
 	// Create some test agents
 	for i := 0; i < 3; i++ {
@@ -857,12 +860,15 @@ func TestProjectList(t *testing.T) {
 			Slug:      tid("project-" + string(rune('a'+i))),
 			Name:      "Project " + string(rune('A'+i)),
 			GitRemote: "https://github.com/test/repo" + string(rune('a'+i)),
+			OwnerID:   DevUserID,
+			CreatedBy: DevUserID,
 			Created:   time.Now(),
 			Updated:   time.Now(),
 		}
 		if err := s.CreateProject(ctx, project); err != nil {
 			t.Fatalf("failed to create project: %v", err)
 		}
+		srv.createProjectMembersGroupAndPolicy(ctx, project)
 	}
 
 	rec := doRequest(t, srv, http.MethodGet, "/api/v1/projects", nil)
@@ -2899,7 +2905,6 @@ func TestOutboundMessage_UnknownRecipient(t *testing.T) {
 		ProjectID:       project.ID,
 		Phase:           "running",
 		RuntimeBrokerID: tid("broker-msg"),
-		Visibility:      store.VisibilityPrivate,
 	}
 	if err := s.CreateAgent(ctx, agent); err != nil {
 		t.Fatal(err)
