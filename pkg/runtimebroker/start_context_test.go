@@ -18,12 +18,17 @@ import (
 	"context"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
+	"github.com/GoogleCloudPlatform/scion/pkg/provision"
 	"github.com/GoogleCloudPlatform/scion/pkg/runtime"
+	"github.com/GoogleCloudPlatform/scion/pkg/store"
+	"github.com/GoogleCloudPlatform/scion/pkg/util"
 )
 
 func newTestServerForStartContext(t *testing.T, cfg ServerConfig) *Server {
@@ -672,5 +677,351 @@ func TestBuildStartContext_GCPMetadataPassthroughFromResolvedEnv(t *testing.T) {
 	}
 	if sc.Opts.Env["GCE_METADATA_HOST"] != "" {
 		t.Errorf("expected no GCE_METADATA_HOST for passthrough, got %q", sc.Opts.Env["GCE_METADATA_HOST"])
+	}
+}
+
+// --- resolveWorktreeProvision tests ---
+
+func TestResolveWorktreeProvision_Eligible(t *testing.T) {
+	projectDir := t.TempDir()
+
+	result := resolveWorktreeProvision(worktreeProvisionInput{
+		WorkspaceMode: store.WorkspaceModeWorktreePerAgent,
+		GitClone: &api.GitCloneConfig{
+			URL:    "https://github.com/org/repo.git",
+			Branch: "main",
+			Depth:  1,
+		},
+		ProjectPath: projectDir,
+		ProjectID:   "proj-1",
+		ProjectSlug: "my-project",
+		AgentID:     "agent-1",
+		AgentName:   "test-agent",
+	})
+
+	eligible, _ := runtime.WorktreeModeEligible()
+	if !eligible {
+		if result.ShouldProvision {
+			t.Fatal("expected ShouldProvision=false when git is too old")
+		}
+		t.Skip("git < 2.47, worktree mode not eligible on this host")
+	}
+
+	if !result.ShouldProvision {
+		t.Fatalf("expected ShouldProvision=true, got false (reason: %s)", result.Reason)
+	}
+
+	expectedPath := filepath.Join(projectDir, "workspace", "worktrees", "agent-1")
+	if result.WorktreePath != expectedPath {
+		t.Errorf("expected WorktreePath=%q, got %q", expectedPath, result.WorktreePath)
+	}
+
+	expectedRoot := filepath.Join(projectDir, "workspace")
+	if result.ProjectRoot != expectedRoot {
+		t.Errorf("expected ProjectRoot=%q, got %q", expectedRoot, result.ProjectRoot)
+	}
+
+	pi := result.ProvisionInput
+	if pi.Mode != store.SharingModeWorktreePerAgent {
+		t.Errorf("expected Mode=worktree-per-agent, got %v", pi.Mode)
+	}
+	if pi.ProjectID != "proj-1" {
+		t.Errorf("expected ProjectID='proj-1', got %q", pi.ProjectID)
+	}
+	if pi.AgentID != "agent-1" {
+		t.Errorf("expected AgentID='agent-1', got %q", pi.AgentID)
+	}
+	if pi.GitClone == nil || pi.GitClone.URL != "https://github.com/org/repo.git" {
+		t.Errorf("expected GitClone.URL set, got %v", pi.GitClone)
+	}
+	if pi.Locker != nil {
+		t.Error("expected Locker=nil for node-local single-broker")
+	}
+}
+
+func TestResolveWorktreeProvision_BranchOverridesAgentName(t *testing.T) {
+	projectDir := t.TempDir()
+	eligible, _ := runtime.WorktreeModeEligible()
+	if !eligible {
+		t.Skip("git < 2.47, worktree mode not eligible on this host")
+	}
+
+	result := resolveWorktreeProvision(worktreeProvisionInput{
+		WorkspaceMode: store.WorkspaceModeWorktreePerAgent,
+		GitClone:      &api.GitCloneConfig{URL: "https://example.com/repo.git"},
+		ProjectPath:   projectDir,
+		ProjectID:     "proj-1",
+		AgentID:       "agent-1",
+		AgentName:     "test-agent",
+		Branch:        "feature-branch",
+	})
+
+	if !result.ShouldProvision {
+		t.Fatalf("expected ShouldProvision=true, reason: %s", result.Reason)
+	}
+	if result.ProvisionInput.AgentName != "feature-branch" {
+		t.Errorf("expected AgentName='feature-branch' (from Branch), got %q", result.ProvisionInput.AgentName)
+	}
+}
+
+func TestResolveWorktreeProvision_WrongMode(t *testing.T) {
+	result := resolveWorktreeProvision(worktreeProvisionInput{
+		WorkspaceMode: store.WorkspaceModePerAgent,
+		GitClone:      &api.GitCloneConfig{URL: "https://example.com/repo.git"},
+		ProjectPath:   "/some/path",
+		ProjectID:     "proj-1",
+		AgentID:       "agent-1",
+	})
+
+	if result.ShouldProvision {
+		t.Fatal("expected ShouldProvision=false for non-worktree mode")
+	}
+	if !strings.Contains(result.Reason, "not worktree-per-agent") {
+		t.Errorf("expected reason to mention mode mismatch, got %q", result.Reason)
+	}
+}
+
+func TestResolveWorktreeProvision_NoGitClone(t *testing.T) {
+	result := resolveWorktreeProvision(worktreeProvisionInput{
+		WorkspaceMode: store.WorkspaceModeWorktreePerAgent,
+		GitClone:      nil,
+		ProjectPath:   "/some/path",
+		ProjectID:     "proj-1",
+		AgentID:       "agent-1",
+	})
+
+	if result.ShouldProvision {
+		t.Fatal("expected ShouldProvision=false when GitClone is nil")
+	}
+	if !strings.Contains(result.Reason, "not git-backed") {
+		t.Errorf("expected reason to mention non-git, got %q", result.Reason)
+	}
+}
+
+func TestResolveWorktreeProvision_GitTooOld_Fallback(t *testing.T) {
+	projectDir := t.TempDir()
+
+	result := resolveWorktreeProvision(worktreeProvisionInput{
+		WorkspaceMode: store.WorkspaceModeWorktreePerAgent,
+		GitClone: &api.GitCloneConfig{
+			URL:    "https://github.com/org/repo.git",
+			Branch: "main",
+			Depth:  1,
+		},
+		ProjectPath: projectDir,
+		ProjectID:   "proj-1",
+		ProjectSlug: "my-project",
+		AgentID:     "agent-1",
+		AgentName:   "test-agent",
+		eligibilityOverride: func() (bool, string) {
+			return false, "git >= 2.47.0 required for worktree-per-agent mode (--relative-paths), found 2.39.0"
+		},
+	})
+
+	if result.ShouldProvision {
+		t.Fatal("expected ShouldProvision=false when git is too old")
+	}
+	if !strings.Contains(result.Reason, "2.47") {
+		t.Errorf("expected reason to mention git 2.47 requirement, got %q", result.Reason)
+	}
+	if result.ProvisionInput.ProjectID != "" {
+		t.Error("expected empty ProvisionInput when ineligible")
+	}
+}
+
+func TestResolveWorktreeProvision_FullCloneDepth(t *testing.T) {
+	eligible, _ := runtime.WorktreeModeEligible()
+	if !eligible {
+		t.Skip("git < 2.47, worktree mode not eligible on this host")
+	}
+
+	projectDir := t.TempDir()
+	originalGC := &api.GitCloneConfig{
+		URL:    "https://github.com/org/repo.git",
+		Branch: "main",
+		Depth:  1,
+	}
+
+	result := resolveWorktreeProvision(worktreeProvisionInput{
+		WorkspaceMode: store.WorkspaceModeWorktreePerAgent,
+		GitClone:      originalGC,
+		ProjectPath:   projectDir,
+		ProjectID:     "proj-1",
+		ProjectSlug:   "my-project",
+		AgentID:       "agent-1",
+	})
+
+	if !result.ShouldProvision {
+		t.Fatalf("expected ShouldProvision=true, reason: %s", result.Reason)
+	}
+
+	if result.ProvisionInput.GitClone.Depth != -1 {
+		t.Errorf("expected GitClone.Depth=-1 (full clone), got %d", result.ProvisionInput.GitClone.Depth)
+	}
+
+	if originalGC.Depth != 1 {
+		t.Errorf("original GitClone.Depth was mutated: got %d, want 1", originalGC.Depth)
+	}
+}
+
+// initBareRepoWithCommit creates a bare git repo (default branch main) seeded
+// with one commit, and returns its path for use as a GitClone URL.
+func initBareRepoWithCommit(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "remote.git")
+	wc := filepath.Join(dir, "wc")
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, strings.TrimSpace(string(out)))
+		}
+	}
+	run("init", "--bare", "-b", "main", bare)
+	run("clone", bare, wc)
+	if err := os.WriteFile(filepath.Join(wc, "README.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("-C", wc, "add", "-A")
+	run("-C", wc, "commit", "-m", "init")
+	run("-C", wc, "push", "origin", "main")
+	return bare
+}
+
+// TestTryProvisionWorktree_FailureDoesNotDeleteSharedBase is the regression for
+// the critical review finding on upstream PR #350: when provisioning fails for
+// one agent, only that agent's worktree may be removed — never the shared base
+// clone (Resolved.HostPath), which holds the common .git and every sibling
+// agent's worktree. Deleting it would destroy all other agents' workspaces.
+func TestTryProvisionWorktree_FailureDoesNotDeleteSharedBase(t *testing.T) {
+	t.Setenv("SCION_HOST_UID", "")
+
+	cfg := DefaultServerConfig()
+	cfg.StateDir = t.TempDir()
+	srv := newTestServerForStartContext(t, cfg)
+
+	bare := initBareRepoWithCommit(t)
+	gc := &api.GitCloneConfig{URL: bare, Branch: "main", Depth: 0}
+
+	projectPath := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up the shared base + a sibling worktree owning branch "agent-a".
+	resolved, err := runtime.NewLocalBackend().Resolve(runtime.ResolveInput{
+		ProjectDir: projectPath, ProjectID: "p1", AgentID: "agent-a",
+		Mode: store.SharingModeWorktreePerAgent,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if err := provision.ProvisionShared(provision.ProvisionInput{
+		Resolved: resolved, Mode: store.SharingModeWorktreePerAgent,
+		ProjectID: "p1", AgentID: "agent-a", AgentName: "agent-a", GitClone: gc,
+	}); err != nil {
+		t.Fatalf("setup agent-a: %v", err)
+	}
+	base := resolved.HostPath
+	siblingWt := provision.WorktreePath(base, "agent-a")
+	if _, err := os.Stat(filepath.Join(base, ".git")); err != nil {
+		t.Fatalf("base .git missing after setup: %v", err)
+	}
+	if _, err := os.Stat(siblingWt); err != nil {
+		t.Fatalf("sibling worktree missing after setup: %v", err)
+	}
+
+	// Provision agent-b with a branch colliding with agent-a's → ensureWorktree
+	// fails ("already checked out"), exercising the cleanup-on-failure path.
+	opts := &api.StartOptions{}
+	ok := srv.tryProvisionWorktree(context.Background(), startContextInputs{
+		Name: "agent-b", AgentID: "agent-b",
+		ProjectID: "p1", ProjectSlug: "proj", ProjectPath: projectPath,
+		WorkspaceMode: store.WorkspaceModeWorktreePerAgent,
+		Config:        &CreateAgentConfig{GitClone: gc, Branch: "agent-a"},
+	}, opts, map[string]string{})
+
+	if ok {
+		t.Fatal("expected provisioning to fail (branch collision) and fall back, got ok=true")
+	}
+
+	// CRITICAL: the shared base and the sibling worktree must survive.
+	if _, err := os.Stat(filepath.Join(base, ".git")); err != nil {
+		t.Errorf("shared base .git was destroyed by a failed sibling provision: %v", err)
+	}
+	if _, err := os.Stat(siblingWt); err != nil {
+		t.Errorf("sibling agent-a worktree was destroyed by a failed sibling provision: %v", err)
+	}
+	// Only the failing agent's partial worktree should be cleaned up.
+	if _, err := os.Stat(provision.WorktreePath(base, "agent-b")); !os.IsNotExist(err) {
+		t.Errorf("agent-b partial worktree should have been cleaned up, stat err=%v", err)
+	}
+}
+
+// TestWorktreeWorkspace_RepoRootDerivesToBase validates that the container
+// dual-mount inputs resolve correctly for the worktree layout WITHOUT any
+// explicit opts.RepoRoot (api.StartOptions has no such field). pkg/agent/run.go
+// derives repoRoot from the workspace itself: IsGitRepoDir(worktree) is true
+// (git rev-parse --is-inside-work-tree works through the worktree .git pointer
+// file), and GetCommonGitDir(worktree) returns the SHARED base .git, so
+// repoRoot = filepath.Dir(commonDir) == the base checkout. The worktree then
+// sits at <base>/worktrees/<id>, giving a non-".." relative path that triggers
+// common.go's .git + worktree dual-mount. (Regression guard for the #350 review
+// claim that opts.RepoRoot must be set explicitly.)
+func TestWorktreeWorkspace_RepoRootDerivesToBase(t *testing.T) {
+	t.Setenv("SCION_HOST_UID", "")
+
+	bare := initBareRepoWithCommit(t)
+	gc := &api.GitCloneConfig{URL: bare, Branch: "main", Depth: 0}
+
+	projectPath := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := runtime.NewLocalBackend().Resolve(runtime.ResolveInput{
+		ProjectDir: projectPath, ProjectID: "p1", AgentID: "agent-a",
+		Mode: store.SharingModeWorktreePerAgent,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if err := provision.ProvisionShared(provision.ProvisionInput{
+		Resolved: resolved, Mode: store.SharingModeWorktreePerAgent,
+		ProjectID: "p1", AgentID: "agent-a", AgentName: "agent-a", GitClone: gc,
+	}); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	base := resolved.HostPath // <projectPath>/workspace — the shared base checkout
+	worktree := provision.WorktreePath(base, "agent-a")
+
+	// Replicate pkg/agent/run.go's repoRoot derivation from the workspace.
+	if !util.IsGitRepoDir(worktree) {
+		t.Fatal("IsGitRepoDir(worktree) = false; run.go would not derive repoRoot from the worktree")
+	}
+	commonDir, err := util.GetCommonGitDir(worktree)
+	if err != nil {
+		t.Fatalf("GetCommonGitDir(worktree): %v", err)
+	}
+	repoRoot := filepath.Dir(commonDir)
+	if repoRoot != base {
+		t.Errorf("derived repoRoot = %q, want base %q", repoRoot, base)
+	}
+
+	// The dual-mount in common.go only fires when rel(repoRoot, workspace) is a
+	// non-".." subpath — confirm the worktree is nested inside the base.
+	rel, err := filepath.Rel(repoRoot, worktree)
+	if err != nil {
+		t.Fatalf("Rel: %v", err)
+	}
+	if rel != filepath.Join("worktrees", "agent-a") {
+		t.Errorf("rel(repoRoot, worktree) = %q, want %q", rel, filepath.Join("worktrees", "agent-a"))
+	}
+	if strings.HasPrefix(rel, "..") {
+		t.Errorf("rel %q starts with .. — common.go dual-mount would NOT fire", rel)
 	}
 }
