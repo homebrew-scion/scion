@@ -114,6 +114,41 @@ The hub will discover and launch `scion-plugin-discord` as a managed subprocess.
 2. **Run `/scion setup`** in any channel → select a project from the list
 3. **Register your identity:** run `/scion register` → click the link → authenticate on your hub's profile page (`/profile/discord`)
 
+## Agent-Led Installation and Setup
+
+If you are using an AI coding assistant or deployment agent (like Antigravity) to set up and configure this plugin on your Scion instance, you can guide the agent with the following instructions:
+
+### 1. Preparation & Credentials
+Provide the agent with your Discord Bot credentials. Since these are sensitive secrets, you should either:
+- Export them as environment variables on your deployment host:
+  ```bash
+  export DISCORD_BOT_TOKEN="your-bot-token"
+  export DISCORD_APP_ID="your-application-id"
+  export DISCORD_PUBLIC_KEY="your-public-key"
+  ```
+- Or point the agent to a temporary local environment file or secure path where they are stored.
+
+### 2. Instructing the Agent
+You can copy and paste the following prompt to have the agent execute the installation:
+
+> **Agent Prompt:**
+> Please build and configure the Discord plugin for the Scion hub on our active GCE instance.
+> 
+> 1. **Build & Install:** Compile the plugin located in `extras/scion-discord` and install the binary `scion-plugin-discord` to `/usr/local/bin/`.
+> 2. **Configure Hub Settings:** Read the existing `/home/scion/.scion/settings.yaml` (or the instance's active settings path) and update it to:
+>    - Add `- discord` to `server.message_broker.types` (enable message_broker if not already true).
+>    - Create the `plugins.broker.discord` block with `bot_token`, `application_id`, and `public_key` set from the environment variables (`DISCORD_BOT_TOKEN`, `DISCORD_APP_ID`, `DISCORD_PUBLIC_KEY`).
+>    - Set `db_path` to `/home/scion/.scion/discord.db` (or ensure the target directory exists and has write permissions for the `scion` user).
+> 3. **Restart Service:** Restart the `scion-hub` systemd service (`sudo systemctl restart scion-hub`).
+> 4. **Verify Deployment:** Stream or grep the `scion-hub` systemd logs (`journalctl -u scion-hub -n 50`) to verify that the message `Discord broker configured` or similar startup log is present and that there are no connection errors.
+
+### 3. Verification Checklist (for the Agent)
+The agent should verify the following to confirm a successful installation:
+- [ ] `which scion-plugin-discord` returns `/usr/local/bin/scion-plugin-discord`.
+- [ ] The SQLite database directory for `db_path` exists and is writable by the `scion` user.
+- [ ] `/home/scion/.scion/settings.yaml` is valid YAML and includes the `discord` broker type.
+- [ ] `systemctl is-active scion-hub` returns `active`.
+
 ## User Guide
 
 ### Slash Commands
