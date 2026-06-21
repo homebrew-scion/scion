@@ -38,4 +38,6 @@ RUN PLATFORM="linux_${TARGETARCH:-amd64}" \
   && chmod +x /usr/local/bin/agy \
   && rm /tmp/cli.tar.gz
 
+RUN printf 'if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then\n    eval $(dbus-launch --sh-syntax)\n    export DBUS_SESSION_BUS_ADDRESS\nfi\nif ! pgrep gnome-keyring-daemon >/dev/null; then\n    eval $(echo "test" | gnome-keyring-daemon --unlock 2>/dev/null)\n    gnome-keyring-daemon --start --components=secrets,pkcs11,ssh >/dev/null 2>&1\nfi\n' >> /etc/bash.bashrc
+
 CMD ["agy"]
