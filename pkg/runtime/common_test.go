@@ -1317,8 +1317,7 @@ func TestBuildCommonRunArgs_ExtraHosts(t *testing.T) {
 	}
 }
 
-func TestWriteFileSecrets_DeduplicatesByTarget(t *testing.T) {
-	homeDir := t.TempDir()
+func TestSerializeSecrets_DeduplicatesByTarget(t *testing.T) {
 	containerHome := "/home/scion"
 
 	secrets := []api.ResolvedSecret{
@@ -1328,28 +1327,26 @@ func TestWriteFileSecrets_DeduplicatesByTarget(t *testing.T) {
 		{Name: "env-secret", Type: "environment", Target: "FOO", Value: "bar", Source: "user"},
 	}
 
-	mounts, err := writeFileSecrets(homeDir, containerHome, secrets)
+	encoded, err := serializeSecrets(containerHome, secrets)
 	if err != nil {
-		t.Fatalf("writeFileSecrets failed: %v", err)
+		t.Fatalf("serializeSecrets failed: %v", err)
 	}
 
-	// Should produce exactly 2 mounts: one for /tmp/my-secret.json (last wins) and one for /tmp/other.json
-	if len(mounts) != 2 {
-		t.Fatalf("expected 2 mount specs, got %d: %v", len(mounts), mounts)
+	staged, err := DecodeStagedSecrets(encoded)
+	if err != nil {
+		t.Fatalf("DecodeStagedSecrets failed: %v", err)
 	}
 
-	// The /tmp/my-secret.json mount should use the project-cert (last entry wins)
-	var mySecretMount string
-	for _, m := range mounts {
-		if strings.Contains(m, "/tmp/my-secret.json") {
-			mySecretMount = m
-		}
+	// Duplicate targets are deduplicated (last entry wins), so we should have
+	// 2 entries: one for /tmp/my-secret.json (project-cert) and one for /tmp/other.json.
+	if len(staged.FileSecrets) != 2 {
+		t.Fatalf("expected 2 file secrets after dedup, got %d", len(staged.FileSecrets))
 	}
-	if mySecretMount == "" {
-		t.Fatal("expected mount for /tmp/my-secret.json")
+	if staged.FileSecrets[0].Name != "project-cert" {
+		t.Errorf("expected project-cert to win for duplicate target, got %s", staged.FileSecrets[0].Name)
 	}
-	if !strings.Contains(mySecretMount, "project-cert") {
-		t.Errorf("expected project-cert to win for duplicate target, got: %s", mySecretMount)
+	if staged.FileSecrets[1].Name != "other-file" {
+		t.Errorf("expected other-file as second entry, got %s", staged.FileSecrets[1].Name)
 	}
 }
 
