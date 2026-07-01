@@ -43,6 +43,7 @@ export class ScionDirBrowser extends LitElement {
   @state() private newFolderName = '';
   @state() private newFolderError: string | null = null;
   @state() private creatingFolder = false;
+  @state() private filterText = '';
 
   static override styles = css`
     :host {
@@ -211,7 +212,10 @@ export class ScionDirBrowser extends LitElement {
   private navigateUp(): void {
     const lastSlash = this.currentPath.lastIndexOf('/');
     if (lastSlash < 0) return;
-    const parent = lastSlash === 0 ? '/' : this.currentPath.substring(0, lastSlash);
+    let parent = lastSlash === 0 ? '/' : this.currentPath.substring(0, lastSlash);
+    if (/^[a-zA-Z]:$/.test(parent)) {
+      parent += '/';
+    }
     void this.navigate(parent);
   }
 
@@ -269,6 +273,57 @@ export class ScionDirBrowser extends LitElement {
     }
   }
 
+  private get filteredEntries(): DirEntry[] {
+    if (!this.filterText) return this.entries;
+    const lower = this.filterText.toLowerCase();
+    return this.entries.filter(e => e.name.toLowerCase().includes(lower));
+  }
+
+  private onFilterInput(e: Event): void {
+    this.filterText = (e.target as HTMLInputElement).value;
+  }
+
+  private onFilterKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      this.filterText = '';
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const dirMatches = this.filteredEntries.filter(entry => entry.isDir);
+      if (dirMatches.length === 1) {
+        this.filterText = '';
+        void this.navigate(this.currentPath + '/' + dirMatches[0].name);
+      } else if (dirMatches.length > 1) {
+        const prefix = this.commonPrefix(dirMatches.map(d => d.name));
+        if (prefix.length > this.filterText.length) {
+          this.filterText = prefix;
+        }
+      }
+      return;
+    }
+    if (e.key === 'Enter') {
+      const matches = this.filteredEntries.filter(entry => entry.isDir);
+      if (matches.length === 1) {
+        this.filterText = '';
+        const newPath = this.currentPath + '/' + matches[0].name;
+        void this.navigate(newPath);
+      }
+    }
+  }
+
+  private commonPrefix(strings: string[]): string {
+    if (strings.length === 0) return '';
+    let prefix = strings[0];
+    for (let i = 1; i < strings.length; i++) {
+      while (!strings[i].toLowerCase().startsWith(prefix.toLowerCase())) {
+        prefix = prefix.slice(0, -1);
+        if (!prefix) return '';
+      }
+    }
+    return prefix;
+  }
+
   override render() {
     const segments = this.currentPath.split('/').filter(Boolean);
 
@@ -291,6 +346,20 @@ export class ScionDirBrowser extends LitElement {
         ` : this.entries.length === 0 ? html`
           <div class="empty-state">Empty directory</div>
         ` : html`
+          ${this.entries.length > 5 ? html`
+            <div style="padding: 0.375rem 0.75rem; border-bottom: 1px solid var(--scion-border, #e2e8f0);">
+              <sl-input
+                size="small"
+                placeholder="Filter…"
+                clearable
+                .value=${this.filterText}
+                @sl-input=${this.onFilterInput}
+                @keydown=${this.onFilterKeydown}
+              >
+                <sl-icon slot="prefix" name="funnel"></sl-icon>
+              </sl-input>
+            </div>
+          ` : nothing}
           <div class="entry-list">
             ${!(segments.length === 0 || (segments.length === 1 && /^[a-zA-Z]:$/.test(segments[0]))) ? html`
               <div class="entry" @click=${() => this.navigateUp()}>
@@ -298,7 +367,7 @@ export class ScionDirBrowser extends LitElement {
                 <span class="name">..</span>
               </div>
             ` : nothing}
-            ${this.entries.map(e => html`
+            ${this.filteredEntries.map(e => html`
               <div class="entry ${e.isDir ? '' : 'is-file'}" @click=${() => this.onEntryClick(e)}>
                 <sl-icon name=${e.isDir ? (e.isGit ? 'git' : 'folder') : 'file-earmark'}></sl-icon>
                 <span class="name">${e.name}</span>
