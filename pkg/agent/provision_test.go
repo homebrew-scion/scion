@@ -758,81 +758,6 @@ services:
 	})
 }
 
-func TestAppendExtraInstructions(t *testing.T) {
-	base := []byte("base instructions")
-	ctx := context.Background()
-
-	t.Run("no git no hub returns unchanged", func(t *testing.T) {
-		result := appendExtraInstructions(ctx, base, false, nil)
-		if string(result) != string(base) {
-			t.Errorf("expected unchanged content, got %q", string(result))
-		}
-	})
-
-	t.Run("nil settings returns unchanged for non-git", func(t *testing.T) {
-		result := appendExtraInstructions(ctx, base, false, nil)
-		if string(result) != string(base) {
-			t.Errorf("expected unchanged content, got %q", string(result))
-		}
-	})
-
-	t.Run("git true appends agents-git.md content", func(t *testing.T) {
-		result := appendExtraInstructions(ctx, base, true, nil)
-		if string(result) == string(base) {
-			t.Errorf("expected content to be appended for git=true")
-		}
-		if !strings.Contains(string(result), string(base)) {
-			t.Errorf("result should contain base content")
-		}
-		if !strings.Contains(string(result), "Git Workflow Protocol") {
-			t.Errorf("result should contain git workflow content from agents-git.md")
-		}
-	})
-
-	t.Run("hub enabled appends agents-hub.md content", func(t *testing.T) {
-		enabled := true
-		settings := &config.VersionedSettings{
-			Hub: &config.V1HubClientConfig{
-				Enabled: &enabled,
-			},
-		}
-		result := appendExtraInstructions(ctx, base, false, settings)
-		if string(result) == string(base) {
-			t.Errorf("expected content to be appended for hub enabled")
-		}
-		if !strings.Contains(string(result), string(base)) {
-			t.Errorf("result should contain base content")
-		}
-		if !strings.Contains(string(result), "Scion CLI Operating Instructions") {
-			t.Errorf("result should contain hub instructions from agents-hub.md")
-		}
-	})
-
-	t.Run("hub disabled does not append", func(t *testing.T) {
-		disabled := false
-		settings := &config.VersionedSettings{
-			Hub: &config.V1HubClientConfig{
-				Enabled: &disabled,
-			},
-		}
-		result := appendExtraInstructions(ctx, base, false, settings)
-		if string(result) != string(base) {
-			t.Errorf("expected unchanged content, got %q", string(result))
-		}
-	})
-
-	t.Run("broker mode appends agents-hub.md even without hub settings", func(t *testing.T) {
-		brokerCtx := api.ContextWithBrokerMode(ctx)
-		result := appendExtraInstructions(brokerCtx, base, false, nil)
-		if string(result) == string(base) {
-			t.Errorf("expected content to be appended for broker mode")
-		}
-		if !strings.Contains(string(result), "Scion CLI Operating Instructions") {
-			t.Errorf("result should contain hub instructions from agents-hub.md in broker mode")
-		}
-	})
-}
-
 func TestProvisionAgent_CopiesSkillsDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -2121,4 +2046,344 @@ func TestProvisionAgent_DuplicateResolvedSkill(t *testing.T) {
 	if !strings.Contains(err.Error(), "duplicate resolved skill") {
 		t.Errorf("error should mention duplicate, got: %v", err)
 	}
+}
+
+func TestParseSkillFrontmatter(t *testing.T) {
+	t.Run("valid frontmatter", func(t *testing.T) {
+		data := []byte("---\nname: test-skill\ndescription: A test skill\ninject_when: git_workspace\n---\n\n# Content here\n")
+		fm := parseSkillFrontmatter(data)
+		if fm.Name != "test-skill" {
+			t.Errorf("Name=%q, want %q", fm.Name, "test-skill")
+		}
+		if fm.Description != "A test skill" {
+			t.Errorf("Description=%q, want %q", fm.Description, "A test skill")
+		}
+		if fm.InjectWhen != "git_workspace" {
+			t.Errorf("InjectWhen=%q, want %q", fm.InjectWhen, "git_workspace")
+		}
+	})
+
+	t.Run("no frontmatter", func(t *testing.T) {
+		data := []byte("# Just a markdown file\nNo frontmatter here\n")
+		fm := parseSkillFrontmatter(data)
+		if fm.Name != "" || fm.InjectWhen != "" {
+			t.Errorf("expected zero-value frontmatter, got %+v", fm)
+		}
+	})
+
+	t.Run("no inject_when field", func(t *testing.T) {
+		data := []byte("---\nname: unconditional\ndescription: Always inject\n---\n\n# Content\n")
+		fm := parseSkillFrontmatter(data)
+		if fm.Name != "unconditional" {
+			t.Errorf("Name=%q, want %q", fm.Name, "unconditional")
+		}
+		if fm.InjectWhen != "" {
+			t.Errorf("InjectWhen=%q, want empty", fm.InjectWhen)
+		}
+	})
+
+	t.Run("unclosed frontmatter", func(t *testing.T) {
+		data := []byte("---\nname: broken\n# No closing delimiter\n")
+		fm := parseSkillFrontmatter(data)
+		if fm.Name != "" {
+			t.Errorf("expected zero-value for unclosed frontmatter, got %+v", fm)
+		}
+	})
+
+	t.Run("malformed YAML in frontmatter", func(t *testing.T) {
+		data := []byte("---\nname: bad-skill\ninject_when:\t\tbadly indented\n  - not: valid\n---\n\n# Content\n")
+		fm := parseSkillFrontmatter(data)
+		// Malformed YAML returns zero-value (skill treated as unconditional)
+		if fm.InjectWhen != "" {
+			t.Errorf("expected empty InjectWhen for malformed YAML, got %q", fm.InjectWhen)
+		}
+	})
+}
+
+func TestShouldInjectSkill(t *testing.T) {
+	tests := []struct {
+		name       string
+		injectWhen string
+		ctx        workspaceSkillsInjectionContext
+		want       bool
+	}{
+		{"unconditional always injects", "", workspaceSkillsInjectionContext{}, true},
+		{"git_workspace with git", "git_workspace", workspaceSkillsInjectionContext{IsGit: true}, true},
+		{"git_workspace without git", "git_workspace", workspaceSkillsInjectionContext{IsGit: false}, false},
+		{"hub_enabled with hub", "hub_enabled", workspaceSkillsInjectionContext{HubEnabled: true}, true},
+		{"hub_enabled without hub", "hub_enabled", workspaceSkillsInjectionContext{HubEnabled: false}, false},
+		{"unknown condition skips", "unknown_condition", workspaceSkillsInjectionContext{IsGit: true, HubEnabled: true}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fm := skillFrontmatter{Name: "test", InjectWhen: tt.injectWhen}
+			got := shouldInjectSkill(fm, tt.ctx)
+			if got != tt.want {
+				t.Errorf("shouldInjectSkill(inject_when=%q)=%v, want %v", tt.injectWhen, got, tt.want)
+			}
+		})
+	}
+}
+
+// createTestSkill creates a skill directory with a SKILL.md file.
+func createTestSkill(t *testing.T, baseDir, name, content string) {
+	t.Helper()
+	skillDir := filepath.Join(baseDir, name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatalf("failed to create skill dir %s: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create test skill %s: %v", name, err)
+	}
+}
+
+// setupWorkspaceSkillsTest creates an isolated project layout for workspace
+// skills injection testing. Returns projectDir, wsSkillsDir, agentHome, skillsDir.
+func setupWorkspaceSkillsTest(t *testing.T) (string, string, string, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, ".scion")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+	wsSkillsDir := filepath.Join(tmpDir, "skills")
+	if err := os.MkdirAll(wsSkillsDir, 0755); err != nil {
+		t.Fatalf("failed to create skills dir: %v", err)
+	}
+	agentHome := filepath.Join(tmpDir, "agent-home")
+	skillsDir := ".claude/skills"
+	if err := os.MkdirAll(filepath.Join(agentHome, skillsDir), 0755); err != nil {
+		t.Fatalf("failed to create agent home skills dir: %v", err)
+	}
+	return projectDir, wsSkillsDir, agentHome, skillsDir
+}
+
+func TestInjectWorkspaceSkills_HarnessWithSkillsDir(t *testing.T) {
+	t.Run("unconditional skills are copied", func(t *testing.T) {
+		projectDir, wsSkillsDir, agentHome, skillsDir := setupWorkspaceSkillsTest(t)
+		createTestSkill(t, wsSkillsDir, "always-skill", "---\nname: always-skill\ndescription: Always inject\n---\n\n# Always\n")
+
+		injCtx := workspaceSkillsInjectionContext{IsGit: false, HubEnabled: false}
+		_, err := injectWorkspaceSkills(projectDir, agentHome, skillsDir, injCtx, nil)
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		dest := filepath.Join(agentHome, skillsDir, "always-skill", "SKILL.md")
+		if _, err := os.Stat(dest); os.IsNotExist(err) {
+			t.Errorf("expected skill to be copied to %s", dest)
+		}
+	})
+
+	t.Run("git_workspace skill injected when isGit=true", func(t *testing.T) {
+		projectDir, wsSkillsDir, agentHome, skillsDir := setupWorkspaceSkillsTest(t)
+		createTestSkill(t, wsSkillsDir, "git-skill", "---\nname: git-skill\ninject_when: git_workspace\n---\n\n# Git\n")
+
+		injCtx := workspaceSkillsInjectionContext{IsGit: true}
+		_, err := injectWorkspaceSkills(projectDir, agentHome, skillsDir, injCtx, nil)
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		dest := filepath.Join(agentHome, skillsDir, "git-skill", "SKILL.md")
+		if _, err := os.Stat(dest); os.IsNotExist(err) {
+			t.Errorf("expected git-skill to be copied when isGit=true")
+		}
+	})
+
+	t.Run("git_workspace skill skipped when isGit=false", func(t *testing.T) {
+		projectDir, wsSkillsDir, agentHome, skillsDir := setupWorkspaceSkillsTest(t)
+		createTestSkill(t, wsSkillsDir, "git-skill", "---\nname: git-skill\ninject_when: git_workspace\n---\n\n# Git\n")
+
+		injCtx := workspaceSkillsInjectionContext{IsGit: false}
+		_, err := injectWorkspaceSkills(projectDir, agentHome, skillsDir, injCtx, nil)
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		dest := filepath.Join(agentHome, skillsDir, "git-skill")
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Errorf("expected git-skill to NOT be copied when isGit=false")
+		}
+	})
+
+	t.Run("template skill takes precedence", func(t *testing.T) {
+		projectDir, wsSkillsDir, agentHome, skillsDir := setupWorkspaceSkillsTest(t)
+
+		templateContent := "template version"
+		tplSkillDir := filepath.Join(agentHome, skillsDir, "conflict-skill")
+		if err := os.MkdirAll(tplSkillDir, 0755); err != nil {
+			t.Fatalf("failed to create template skill dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tplSkillDir, "SKILL.md"), []byte(templateContent), 0644); err != nil {
+			t.Fatalf("failed to write template skill: %v", err)
+		}
+
+		createTestSkill(t, wsSkillsDir, "conflict-skill", "---\nname: conflict-skill\n---\n\nworkspace version")
+
+		injCtx := workspaceSkillsInjectionContext{}
+		_, err := injectWorkspaceSkills(projectDir, agentHome, skillsDir, injCtx, nil)
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		data, err := os.ReadFile(filepath.Join(tplSkillDir, "SKILL.md"))
+		if err != nil {
+			t.Fatalf("failed to read skill: %v", err)
+		}
+		if string(data) != templateContent {
+			t.Errorf("template skill was overwritten: got %q, want %q", string(data), templateContent)
+		}
+	})
+
+	t.Run("no workspace skills dir is graceful", func(t *testing.T) {
+		noSkillsProject := filepath.Join(t.TempDir(), ".scion")
+		if err := os.MkdirAll(noSkillsProject, 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+		agentHome := filepath.Join(t.TempDir(), "agent-home")
+		if err := os.MkdirAll(agentHome, 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+
+		injCtx := workspaceSkillsInjectionContext{}
+		_, err := injectWorkspaceSkills(noSkillsProject, agentHome, ".claude/skills", injCtx, nil)
+		if err != nil {
+			t.Errorf("expected graceful handling of missing skills dir, got: %v", err)
+		}
+	})
+
+	t.Run("hidden directories are skipped", func(t *testing.T) {
+		projectDir, wsSkillsDir, agentHome, skillsDir := setupWorkspaceSkillsTest(t)
+
+		hiddenDir := filepath.Join(wsSkillsDir, ".hidden-skill")
+		if err := os.MkdirAll(hiddenDir, 0755); err != nil {
+			t.Fatalf("failed to create hidden dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(hiddenDir, "SKILL.md"), []byte("---\nname: hidden\n---\n"), 0644); err != nil {
+			t.Fatalf("failed to write file: %v", err)
+		}
+
+		injCtx := workspaceSkillsInjectionContext{}
+		_, err := injectWorkspaceSkills(projectDir, agentHome, skillsDir, injCtx, nil)
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		dest := filepath.Join(agentHome, skillsDir, ".hidden-skill")
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Errorf("expected hidden directory to be skipped")
+		}
+	})
+
+	t.Run("non-directory files in skills dir are skipped", func(t *testing.T) {
+		projectDir, wsSkillsDir, agentHome, skillsDir := setupWorkspaceSkillsTest(t)
+
+		readmePath := filepath.Join(wsSkillsDir, "README.md")
+		if err := os.WriteFile(readmePath, []byte("# Skills readme"), 0644); err != nil {
+			t.Fatalf("failed to write readme: %v", err)
+		}
+
+		injCtx := workspaceSkillsInjectionContext{}
+		_, err := injectWorkspaceSkills(projectDir, agentHome, skillsDir, injCtx, nil)
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		dest := filepath.Join(agentHome, skillsDir, "README.md")
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Errorf("expected non-directory file to be skipped")
+		}
+	})
+}
+
+func TestInjectWorkspaceSkills_FallbackComposition(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	projectDir := filepath.Join(tmpDir, ".scion")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+	wsSkillsDir := filepath.Join(tmpDir, "skills")
+	if err := os.MkdirAll(wsSkillsDir, 0755); err != nil {
+		t.Fatalf("failed to create skills dir: %v", err)
+	}
+
+	agentHome := filepath.Join(tmpDir, "agent-home")
+	if err := os.MkdirAll(agentHome, 0755); err != nil {
+		t.Fatalf("failed to create agent home: %v", err)
+	}
+
+	t.Run("SKILL.md content appended when no skills dir", func(t *testing.T) {
+		createTestSkill(t, wsSkillsDir, "fallback-skill", "---\nname: fallback-skill\n---\n\n# Fallback content\n")
+
+		injCtx := workspaceSkillsInjectionContext{}
+		result, err := injectWorkspaceSkills(projectDir, agentHome, "", injCtx, []byte("base instructions"))
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		if !strings.Contains(string(result), "# Fallback content") {
+			t.Errorf("expected SKILL.md content to be appended, got: %q", string(result))
+		}
+		if !strings.Contains(string(result), "base instructions") {
+			t.Errorf("expected base content to be preserved")
+		}
+	})
+
+	t.Run("conditional skills are respected in fallback mode", func(t *testing.T) {
+		createTestSkill(t, wsSkillsDir, "git-only-fallback", "---\nname: git-only-fallback\ninject_when: git_workspace\n---\n\n# Git only\n")
+
+		injCtx := workspaceSkillsInjectionContext{IsGit: false}
+		result, err := injectWorkspaceSkills(projectDir, agentHome, "", injCtx, []byte("base"))
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		if strings.Contains(string(result), "# Git only") {
+			t.Errorf("expected git-only skill to be skipped when isGit=false")
+		}
+	})
+
+	t.Run("skill without SKILL.md is skipped in fallback", func(t *testing.T) {
+		isolatedDir := t.TempDir()
+		isolatedProject := filepath.Join(isolatedDir, ".scion")
+		if err := os.MkdirAll(isolatedProject, 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+		isolatedSkills := filepath.Join(isolatedDir, "skills")
+		if err := os.MkdirAll(isolatedSkills, 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+
+		noMDSkill := filepath.Join(isolatedSkills, "no-skillmd")
+		if err := os.MkdirAll(noMDSkill, 0755); err != nil {
+			t.Fatalf("failed to create dir: %v", err)
+		}
+
+		injCtx := workspaceSkillsInjectionContext{}
+		result, err := injectWorkspaceSkills(isolatedProject, agentHome, "", injCtx, []byte("base"))
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		if string(result) != "base" {
+			t.Errorf("expected no change for skill without SKILL.md, got: %q", string(result))
+		}
+	})
+
+	t.Run("hub_enabled skill injected in fallback when hub active", func(t *testing.T) {
+		createTestSkill(t, wsSkillsDir, "hub-fallback", "---\nname: hub-fallback\ninject_when: hub_enabled\n---\n\n# Hub content\n")
+
+		injCtx := workspaceSkillsInjectionContext{HubEnabled: true}
+		result, err := injectWorkspaceSkills(projectDir, agentHome, "", injCtx, []byte("base"))
+		if err != nil {
+			t.Fatalf("injectWorkspaceSkills failed: %v", err)
+		}
+
+		if !strings.Contains(string(result), "# Hub content") {
+			t.Errorf("expected hub skill content when hubEnabled=true")
+		}
+	})
 }
