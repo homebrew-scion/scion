@@ -26,6 +26,8 @@ type Tx struct {
 	BrokerJoinToken *BrokerJoinTokenClient
 	// BrokerSecret is the client for interacting with the BrokerSecret builders.
 	BrokerSecret *BrokerSecretClient
+	// DiscordPendingLink is the client for interacting with the DiscordPendingLink builders.
+	DiscordPendingLink *DiscordPendingLinkClient
 	// EnvVar is the client for interacting with the EnvVar builders.
 	EnvVar *EnvVarClient
 	// GCPServiceAccount is the client for interacting with the GCPServiceAccount builders.
@@ -38,6 +40,10 @@ type Tx struct {
 	GroupMembership *GroupMembershipClient
 	// HarnessConfig is the client for interacting with the HarnessConfig builders.
 	HarnessConfig *HarnessConfigClient
+	// IntegrationConfig is the client for interacting with the IntegrationConfig builders.
+	IntegrationConfig *IntegrationConfigClient
+	// IntegrationUpdate is the client for interacting with the IntegrationUpdate builders.
+	IntegrationUpdate *IntegrationUpdateClient
 	// InviteCode is the client for interacting with the InviteCode builders.
 	InviteCode *InviteCodeClient
 	// LifecycleHook is the client for interacting with the LifecycleHook builders.
@@ -222,12 +228,15 @@ func (tx *Tx) init() {
 	tx.BrokerDispatch = NewBrokerDispatchClient(tx.config)
 	tx.BrokerJoinToken = NewBrokerJoinTokenClient(tx.config)
 	tx.BrokerSecret = NewBrokerSecretClient(tx.config)
+	tx.DiscordPendingLink = NewDiscordPendingLinkClient(tx.config)
 	tx.EnvVar = NewEnvVarClient(tx.config)
 	tx.GCPServiceAccount = NewGCPServiceAccountClient(tx.config)
 	tx.GithubInstallation = NewGithubInstallationClient(tx.config)
 	tx.Group = NewGroupClient(tx.config)
 	tx.GroupMembership = NewGroupMembershipClient(tx.config)
 	tx.HarnessConfig = NewHarnessConfigClient(tx.config)
+	tx.IntegrationConfig = NewIntegrationConfigClient(tx.config)
+	tx.IntegrationUpdate = NewIntegrationUpdateClient(tx.config)
 	tx.InviteCode = NewInviteCodeClient(tx.config)
 	tx.LifecycleHook = NewLifecycleHookClient(tx.config)
 	tx.LifecycleHookAgentPhase = NewLifecycleHookAgentPhaseClient(tx.config)

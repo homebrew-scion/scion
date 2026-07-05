@@ -36,6 +36,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/scion/pkg/agent/state"
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent"
 	"github.com/GoogleCloudPlatform/scion/pkg/eventbus"
 	"github.com/GoogleCloudPlatform/scion/pkg/harness"
 	"github.com/GoogleCloudPlatform/scion/pkg/hub/githubapp"
@@ -673,6 +674,25 @@ type Server struct {
 
 	imageChecker      *imagecheck.Checker
 	imageStatusFlight singleflight.Group
+
+	// Mode 3 (HA) integration support fields.
+	// dbDriver records the database backend ("sqlite" or "postgres") for
+	// feature-gating Mode 3 endpoints that require Postgres.
+	dbDriver string
+	// entClient is the Ent ORM client for direct queries on
+	// integration_configs and integration_updates tables (nil when HA
+	// integration features are not configured).
+	entClient *ent.Client
+	// adminSignalListener listens for NOTIFY on scion_integration_admin
+	// (nil when database is not Postgres).
+	adminSignalListener *AdminSignalListener
+	// databaseDSN is the Postgres connection string, needed to open the
+	// admin signal listener connection and for PublishAdminSignal calls
+	// outside a transaction (nil/empty when database is not Postgres).
+	databaseDSN string
+	// updateTracker manages pending HA update timeouts and reconnect-based
+	// completion detection.
+	updateTracker *pendingUpdateTracker
 }
 
 func newInstanceID() string {
@@ -733,6 +753,9 @@ func New(cfg ServerConfig, s store.Store) (*Server, error) {
 	if cfg.SecretBackend != nil {
 		srv.secretBackend = cfg.SecretBackend
 	}
+
+	// Initialize update tracker for HA integration completion detection.
+	srv.updateTracker = newPendingUpdateTracker()
 
 	// Initialize user activity tracker (throttled to once per hour per user)
 	srv.userActivity = NewUserActivityTracker(s, time.Hour)
@@ -1441,8 +1464,34 @@ func (s *Server) GetMessageBrokerProxy() *MessageBrokerProxy {
 // SetPluginManager sets the plugin manager for broker integration admin API.
 func (s *Server) SetPluginManager(m IntegrationManager) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.pluginManager = m
+	s.mu.Unlock()
+
+	s.registerReconnectCallbacks(m)
+}
+
+// SetIntegrationHA configures Mode 3 (HA) integration support on the server.
+// It sets the database driver, Ent client, and DSN needed for Postgres-backed
+// integration config/update endpoints and the admin signal listener.
+func (s *Server) SetIntegrationHA(dbDriver string, client *ent.Client, dsn string) {
+	s.mu.Lock()
+	s.dbDriver = dbDriver
+	s.entClient = client
+	s.databaseDSN = dsn
+
+	if client != nil && s.discordLinkService != nil {
+		s.discordLinkService.SetEntClient(client)
+	}
+	s.mu.Unlock()
+
+	if client != nil {
+		s.sweepOrphanedUpdates()
+	}
+}
+
+// IsPostgres reports whether the hub is running on a Postgres backend.
+func (s *Server) IsPostgres() bool {
+	return strings.EqualFold(s.dbDriver, "postgres")
 }
 
 // logMessage logs a message dispatch event to the dedicated message logger

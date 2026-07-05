@@ -12,12 +12,15 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokerdispatch"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokerjointoken"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokersecret"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/discordpendinglink"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/envvar"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/gcpserviceaccount"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/githubinstallation"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/group"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/harnessconfig"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationconfig"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationupdate"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/invitecode"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/lifecyclehook"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/lifecyclehookagentphase"
@@ -229,6 +232,32 @@ func init() {
 	brokersecretDescCreated := brokersecretFields[6].Descriptor()
 	// brokersecret.DefaultCreated holds the default value on creation for the created field.
 	brokersecret.DefaultCreated = brokersecretDescCreated.Default.(func() time.Time)
+	discordpendinglinkFields := schema.DiscordPendingLink{}.Fields()
+	_ = discordpendinglinkFields
+	// discordpendinglinkDescCode is the schema descriptor for code field.
+	discordpendinglinkDescCode := discordpendinglinkFields[0].Descriptor()
+	// discordpendinglink.CodeValidator is a validator for the "code" field. It is called by the builders before save.
+	discordpendinglink.CodeValidator = discordpendinglinkDescCode.Validators[0].(func(string) error)
+	// discordpendinglinkDescDiscordUserID is the schema descriptor for discord_user_id field.
+	discordpendinglinkDescDiscordUserID := discordpendinglinkFields[1].Descriptor()
+	// discordpendinglink.DiscordUserIDValidator is a validator for the "discord_user_id" field. It is called by the builders before save.
+	discordpendinglink.DiscordUserIDValidator = discordpendinglinkDescDiscordUserID.Validators[0].(func(string) error)
+	// discordpendinglinkDescStatus is the schema descriptor for status field.
+	discordpendinglinkDescStatus := discordpendinglinkFields[2].Descriptor()
+	// discordpendinglink.DefaultStatus holds the default value on creation for the status field.
+	discordpendinglink.DefaultStatus = discordpendinglinkDescStatus.Default.(string)
+	// discordpendinglinkDescUserID is the schema descriptor for user_id field.
+	discordpendinglinkDescUserID := discordpendinglinkFields[3].Descriptor()
+	// discordpendinglink.DefaultUserID holds the default value on creation for the user_id field.
+	discordpendinglink.DefaultUserID = discordpendinglinkDescUserID.Default.(string)
+	// discordpendinglinkDescUserEmail is the schema descriptor for user_email field.
+	discordpendinglinkDescUserEmail := discordpendinglinkFields[4].Descriptor()
+	// discordpendinglink.DefaultUserEmail holds the default value on creation for the user_email field.
+	discordpendinglink.DefaultUserEmail = discordpendinglinkDescUserEmail.Default.(string)
+	// discordpendinglinkDescCreatedAt is the schema descriptor for created_at field.
+	discordpendinglinkDescCreatedAt := discordpendinglinkFields[6].Descriptor()
+	// discordpendinglink.DefaultCreatedAt holds the default value on creation for the created_at field.
+	discordpendinglink.DefaultCreatedAt = discordpendinglinkDescCreatedAt.Default.(func() time.Time)
 	envvarFields := schema.EnvVar{}.Fields()
 	_ = envvarFields
 	// envvarDescKey is the schema descriptor for key field.
@@ -409,6 +438,54 @@ func init() {
 	harnessconfigDescID := harnessconfigFields[0].Descriptor()
 	// harnessconfig.DefaultID holds the default value on creation for the id field.
 	harnessconfig.DefaultID = harnessconfigDescID.Default.(func() uuid.UUID)
+	integrationconfigFields := schema.IntegrationConfig{}.Fields()
+	_ = integrationconfigFields
+	// integrationconfigDescIntegration is the schema descriptor for integration field.
+	integrationconfigDescIntegration := integrationconfigFields[1].Descriptor()
+	// integrationconfig.IntegrationValidator is a validator for the "integration" field. It is called by the builders before save.
+	integrationconfig.IntegrationValidator = integrationconfigDescIntegration.Validators[0].(func(string) error)
+	// integrationconfigDescConfig is the schema descriptor for config field.
+	integrationconfigDescConfig := integrationconfigFields[2].Descriptor()
+	// integrationconfig.DefaultConfig holds the default value on creation for the config field.
+	integrationconfig.DefaultConfig = integrationconfigDescConfig.Default.(string)
+	// integrationconfigDescEnabled is the schema descriptor for enabled field.
+	integrationconfigDescEnabled := integrationconfigFields[3].Descriptor()
+	// integrationconfig.DefaultEnabled holds the default value on creation for the enabled field.
+	integrationconfig.DefaultEnabled = integrationconfigDescEnabled.Default.(bool)
+	// integrationconfigDescCreateTime is the schema descriptor for create_time field.
+	integrationconfigDescCreateTime := integrationconfigFields[5].Descriptor()
+	// integrationconfig.DefaultCreateTime holds the default value on creation for the create_time field.
+	integrationconfig.DefaultCreateTime = integrationconfigDescCreateTime.Default.(func() time.Time)
+	// integrationconfigDescUpdateTime is the schema descriptor for update_time field.
+	integrationconfigDescUpdateTime := integrationconfigFields[6].Descriptor()
+	// integrationconfig.DefaultUpdateTime holds the default value on creation for the update_time field.
+	integrationconfig.DefaultUpdateTime = integrationconfigDescUpdateTime.Default.(func() time.Time)
+	// integrationconfig.UpdateDefaultUpdateTime holds the default value on update for the update_time field.
+	integrationconfig.UpdateDefaultUpdateTime = integrationconfigDescUpdateTime.UpdateDefault.(func() time.Time)
+	// integrationconfigDescID is the schema descriptor for id field.
+	integrationconfigDescID := integrationconfigFields[0].Descriptor()
+	// integrationconfig.DefaultID holds the default value on creation for the id field.
+	integrationconfig.DefaultID = integrationconfigDescID.Default.(func() uuid.UUID)
+	integrationupdateFields := schema.IntegrationUpdate{}.Fields()
+	_ = integrationupdateFields
+	// integrationupdateDescIntegration is the schema descriptor for integration field.
+	integrationupdateDescIntegration := integrationupdateFields[1].Descriptor()
+	// integrationupdate.IntegrationValidator is a validator for the "integration" field. It is called by the builders before save.
+	integrationupdate.IntegrationValidator = integrationupdateDescIntegration.Validators[0].(func(string) error)
+	// integrationupdateDescCreateTime is the schema descriptor for create_time field.
+	integrationupdateDescCreateTime := integrationupdateFields[6].Descriptor()
+	// integrationupdate.DefaultCreateTime holds the default value on creation for the create_time field.
+	integrationupdate.DefaultCreateTime = integrationupdateDescCreateTime.Default.(func() time.Time)
+	// integrationupdateDescUpdateTime is the schema descriptor for update_time field.
+	integrationupdateDescUpdateTime := integrationupdateFields[7].Descriptor()
+	// integrationupdate.DefaultUpdateTime holds the default value on creation for the update_time field.
+	integrationupdate.DefaultUpdateTime = integrationupdateDescUpdateTime.Default.(func() time.Time)
+	// integrationupdate.UpdateDefaultUpdateTime holds the default value on update for the update_time field.
+	integrationupdate.UpdateDefaultUpdateTime = integrationupdateDescUpdateTime.UpdateDefault.(func() time.Time)
+	// integrationupdateDescID is the schema descriptor for id field.
+	integrationupdateDescID := integrationupdateFields[0].Descriptor()
+	// integrationupdate.DefaultID holds the default value on creation for the id field.
+	integrationupdate.DefaultID = integrationupdateDescID.Default.(func() uuid.UUID)
 	invitecodeFields := schema.InviteCode{}.Fields()
 	_ = invitecodeFields
 	// invitecodeDescCodeHash is the schema descriptor for code_hash field.

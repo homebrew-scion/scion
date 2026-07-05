@@ -9,8 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GoogleCloudPlatform/scion/pkg/integration/lockloop"
+
 	_ "modernc.org/sqlite"
 )
+
+// AdvisoryLockHandle is an alias for the shared lockloop type.
+type AdvisoryLockHandle = lockloop.AdvisoryLockHandle
+
+// NewAdvisoryLockHandle constructs an AdvisoryLockHandle (delegates to lockloop).
+var NewAdvisoryLockHandle = lockloop.NewAdvisoryLockHandle
 
 // Store defines the persistence interface for the Discord broker plugin.
 type Store interface {
@@ -53,6 +61,11 @@ type Store interface {
 	// Notification preferences
 	SetNotificationPref(ctx context.Context, pref *NotificationPref) error
 	GetNotificationPrefs(ctx context.Context, discordUserID, projectID string) ([]*NotificationPref, error)
+
+	// Advisory locks (HA singleton coordination).
+	// On Postgres, acquires a session-scoped lock on a dedicated connection.
+	// The returned handle MUST be Released when the lock is no longer needed.
+	TryAdvisoryLock(ctx context.Context, key int64) (acquired bool, handle *AdvisoryLockHandle, err error)
 
 	// Lifecycle
 	Close() error
@@ -683,6 +696,15 @@ func scanUserMapping(row *sql.Row) (*DiscordUserMapping, error) {
 		return nil, fmt.Errorf("parse linked_at: %w", err)
 	}
 	return &m, nil
+}
+
+// --- Advisory locks (SQLite stub — single-node, no contention) ---
+
+func (s *sqliteStore) TryAdvisoryLock(_ context.Context, _ int64) (bool, *AdvisoryLockHandle, error) {
+	return true, NewAdvisoryLockHandle(
+		func() error { return nil },
+		func(_ context.Context) error { return nil },
+	), nil
 }
 
 func boolToInt(b bool) int {

@@ -172,16 +172,24 @@ func (b *TelegramBrokerV2) Configure(config map[string]string) error {
 		b.agentCacheTTL = d
 	}
 
-	// Initialize SQLite store.
-	dbPath := config["db_path"]
-	if dbPath == "" {
-		dbPath = defaultDBPath
+	// Initialize store: Postgres if database_url is set, otherwise SQLite.
+	if databaseURL, ok := config["database_url"]; ok && databaseURL != "" {
+		store, err := NewPostgresStore(databaseURL)
+		if err != nil {
+			return fmt.Errorf("init postgres store: %w", err)
+		}
+		b.store = store
+	} else {
+		dbPath := config["db_path"]
+		if dbPath == "" {
+			dbPath = defaultDBPath
+		}
+		store, err := NewSQLiteStore(dbPath)
+		if err != nil {
+			return fmt.Errorf("init store: %w", err)
+		}
+		b.store = store
 	}
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		return fmt.Errorf("init store: %w", err)
-	}
-	b.store = store
 
 	// Validate bot token.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -230,10 +238,15 @@ func (b *TelegramBrokerV2) Configure(config map[string]string) error {
 
 		webhookSecret := config["webhook_secret"]
 
-		// Register the webhook with Telegram.
-		if err := b.api.SetWebhook(ctx, webhookURL, webhookSecret); err != nil {
-			b.store.Close()
-			return fmt.Errorf("failed to set webhook: %w", err)
+		// In standalone HA mode, skip_set_webhook=true means this instance
+		// should start the HTTP listener but NOT call setWebhook. Only the
+		// lock holder calls RegisterWebhook() separately.
+		skipSetWebhook := config["skip_set_webhook"] == "true"
+		if !skipSetWebhook {
+			if err := b.api.SetWebhook(ctx, webhookURL, webhookSecret); err != nil {
+				b.store.Close()
+				return fmt.Errorf("failed to set webhook: %w", err)
+			}
 		}
 
 		// Stop any existing webhook server before starting a new one.
@@ -308,15 +321,51 @@ func (b *TelegramBrokerV2) Configure(config map[string]string) error {
 		slugCancel()
 	}
 
+	storeBackend := "sqlite"
+	if _, ok := config["database_url"]; ok && config["database_url"] != "" {
+		storeBackend = "postgres"
+	}
 	b.log.Info("Telegram v2 broker configured",
 		"bot_username", bot.Username,
 		"bot_id", bot.ID,
 		"hub_url", b.hubURL,
 		"broker_id", b.brokerID,
-		"db_path", dbPath,
+		"store_backend", storeBackend,
 		"inbound_mode", b.inboundMode,
 	)
 	return nil
+}
+
+// RegisterWebhook calls the Telegram setWebhook API to register this instance's
+// webhook URL. In standalone HA mode, only the lock holder should call this.
+func (b *TelegramBrokerV2) RegisterWebhook(webhookURL, webhookSecret string) error {
+	b.mu.RLock()
+	api := b.api
+	b.mu.RUnlock()
+
+	if api == nil {
+		return fmt.Errorf("broker not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return api.SetWebhook(ctx, webhookURL, webhookSecret)
+}
+
+// DeregisterWebhook calls the Telegram deleteWebhook API to remove the
+// webhook registration. Called when the lock holder loses the lock.
+func (b *TelegramBrokerV2) DeregisterWebhook() error {
+	b.mu.RLock()
+	api := b.api
+	b.mu.RUnlock()
+
+	if api == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return api.DeleteWebhook(ctx)
 }
 
 // registerBotCommands sets the bot's command menu in Telegram for autocomplete.

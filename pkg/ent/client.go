@@ -23,12 +23,15 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokerdispatch"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokerjointoken"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokersecret"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/discordpendinglink"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/envvar"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/gcpserviceaccount"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/githubinstallation"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/group"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/harnessconfig"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationconfig"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationupdate"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/invitecode"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/lifecyclehook"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/lifecyclehookagentphase"
@@ -73,6 +76,8 @@ type Client struct {
 	BrokerJoinToken *BrokerJoinTokenClient
 	// BrokerSecret is the client for interacting with the BrokerSecret builders.
 	BrokerSecret *BrokerSecretClient
+	// DiscordPendingLink is the client for interacting with the DiscordPendingLink builders.
+	DiscordPendingLink *DiscordPendingLinkClient
 	// EnvVar is the client for interacting with the EnvVar builders.
 	EnvVar *EnvVarClient
 	// GCPServiceAccount is the client for interacting with the GCPServiceAccount builders.
@@ -85,6 +90,10 @@ type Client struct {
 	GroupMembership *GroupMembershipClient
 	// HarnessConfig is the client for interacting with the HarnessConfig builders.
 	HarnessConfig *HarnessConfigClient
+	// IntegrationConfig is the client for interacting with the IntegrationConfig builders.
+	IntegrationConfig *IntegrationConfigClient
+	// IntegrationUpdate is the client for interacting with the IntegrationUpdate builders.
+	IntegrationUpdate *IntegrationUpdateClient
 	// InviteCode is the client for interacting with the InviteCode builders.
 	InviteCode *InviteCodeClient
 	// LifecycleHook is the client for interacting with the LifecycleHook builders.
@@ -149,12 +158,15 @@ func (c *Client) init() {
 	c.BrokerDispatch = NewBrokerDispatchClient(c.config)
 	c.BrokerJoinToken = NewBrokerJoinTokenClient(c.config)
 	c.BrokerSecret = NewBrokerSecretClient(c.config)
+	c.DiscordPendingLink = NewDiscordPendingLinkClient(c.config)
 	c.EnvVar = NewEnvVarClient(c.config)
 	c.GCPServiceAccount = NewGCPServiceAccountClient(c.config)
 	c.GithubInstallation = NewGithubInstallationClient(c.config)
 	c.Group = NewGroupClient(c.config)
 	c.GroupMembership = NewGroupMembershipClient(c.config)
 	c.HarnessConfig = NewHarnessConfigClient(c.config)
+	c.IntegrationConfig = NewIntegrationConfigClient(c.config)
+	c.IntegrationUpdate = NewIntegrationUpdateClient(c.config)
 	c.InviteCode = NewInviteCodeClient(c.config)
 	c.LifecycleHook = NewLifecycleHookClient(c.config)
 	c.LifecycleHookAgentPhase = NewLifecycleHookAgentPhaseClient(c.config)
@@ -277,12 +289,15 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		BrokerDispatch:           NewBrokerDispatchClient(cfg),
 		BrokerJoinToken:          NewBrokerJoinTokenClient(cfg),
 		BrokerSecret:             NewBrokerSecretClient(cfg),
+		DiscordPendingLink:       NewDiscordPendingLinkClient(cfg),
 		EnvVar:                   NewEnvVarClient(cfg),
 		GCPServiceAccount:        NewGCPServiceAccountClient(cfg),
 		GithubInstallation:       NewGithubInstallationClient(cfg),
 		Group:                    NewGroupClient(cfg),
 		GroupMembership:          NewGroupMembershipClient(cfg),
 		HarnessConfig:            NewHarnessConfigClient(cfg),
+		IntegrationConfig:        NewIntegrationConfigClient(cfg),
+		IntegrationUpdate:        NewIntegrationUpdateClient(cfg),
 		InviteCode:               NewInviteCodeClient(cfg),
 		LifecycleHook:            NewLifecycleHookClient(cfg),
 		LifecycleHookAgentPhase:  NewLifecycleHookAgentPhaseClient(cfg),
@@ -332,12 +347,15 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		BrokerDispatch:           NewBrokerDispatchClient(cfg),
 		BrokerJoinToken:          NewBrokerJoinTokenClient(cfg),
 		BrokerSecret:             NewBrokerSecretClient(cfg),
+		DiscordPendingLink:       NewDiscordPendingLinkClient(cfg),
 		EnvVar:                   NewEnvVarClient(cfg),
 		GCPServiceAccount:        NewGCPServiceAccountClient(cfg),
 		GithubInstallation:       NewGithubInstallationClient(cfg),
 		Group:                    NewGroupClient(cfg),
 		GroupMembership:          NewGroupMembershipClient(cfg),
 		HarnessConfig:            NewHarnessConfigClient(cfg),
+		IntegrationConfig:        NewIntegrationConfigClient(cfg),
+		IntegrationUpdate:        NewIntegrationUpdateClient(cfg),
 		InviteCode:               NewInviteCodeClient(cfg),
 		LifecycleHook:            NewLifecycleHookClient(cfg),
 		LifecycleHookAgentPhase:  NewLifecycleHookAgentPhaseClient(cfg),
@@ -391,10 +409,11 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.AccessPolicy, c.Agent, c.AllowListEntry, c.ApiKey, c.BrokerDispatch,
-		c.BrokerJoinToken, c.BrokerSecret, c.EnvVar, c.GCPServiceAccount,
-		c.GithubInstallation, c.Group, c.GroupMembership, c.HarnessConfig,
-		c.InviteCode, c.LifecycleHook, c.LifecycleHookAgentPhase,
-		c.MaintenanceOperation, c.MaintenanceOperationRun, c.Message, c.Notification,
+		c.BrokerJoinToken, c.BrokerSecret, c.DiscordPendingLink, c.EnvVar,
+		c.GCPServiceAccount, c.GithubInstallation, c.Group, c.GroupMembership,
+		c.HarnessConfig, c.IntegrationConfig, c.IntegrationUpdate, c.InviteCode,
+		c.LifecycleHook, c.LifecycleHookAgentPhase, c.MaintenanceOperation,
+		c.MaintenanceOperationRun, c.Message, c.Notification,
 		c.NotificationSubscription, c.PolicyBinding, c.Project, c.ProjectContributor,
 		c.ProjectSyncState, c.RuntimeBroker, c.Schedule, c.ScheduledEvent, c.Secret,
 		c.Skill, c.SkillRegistry, c.SkillVersion, c.SubscriptionTemplate, c.Template,
@@ -409,10 +428,11 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.AccessPolicy, c.Agent, c.AllowListEntry, c.ApiKey, c.BrokerDispatch,
-		c.BrokerJoinToken, c.BrokerSecret, c.EnvVar, c.GCPServiceAccount,
-		c.GithubInstallation, c.Group, c.GroupMembership, c.HarnessConfig,
-		c.InviteCode, c.LifecycleHook, c.LifecycleHookAgentPhase,
-		c.MaintenanceOperation, c.MaintenanceOperationRun, c.Message, c.Notification,
+		c.BrokerJoinToken, c.BrokerSecret, c.DiscordPendingLink, c.EnvVar,
+		c.GCPServiceAccount, c.GithubInstallation, c.Group, c.GroupMembership,
+		c.HarnessConfig, c.IntegrationConfig, c.IntegrationUpdate, c.InviteCode,
+		c.LifecycleHook, c.LifecycleHookAgentPhase, c.MaintenanceOperation,
+		c.MaintenanceOperationRun, c.Message, c.Notification,
 		c.NotificationSubscription, c.PolicyBinding, c.Project, c.ProjectContributor,
 		c.ProjectSyncState, c.RuntimeBroker, c.Schedule, c.ScheduledEvent, c.Secret,
 		c.Skill, c.SkillRegistry, c.SkillVersion, c.SubscriptionTemplate, c.Template,
@@ -439,6 +459,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.BrokerJoinToken.mutate(ctx, m)
 	case *BrokerSecretMutation:
 		return c.BrokerSecret.mutate(ctx, m)
+	case *DiscordPendingLinkMutation:
+		return c.DiscordPendingLink.mutate(ctx, m)
 	case *EnvVarMutation:
 		return c.EnvVar.mutate(ctx, m)
 	case *GCPServiceAccountMutation:
@@ -451,6 +473,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.GroupMembership.mutate(ctx, m)
 	case *HarnessConfigMutation:
 		return c.HarnessConfig.mutate(ctx, m)
+	case *IntegrationConfigMutation:
+		return c.IntegrationConfig.mutate(ctx, m)
+	case *IntegrationUpdateMutation:
+		return c.IntegrationUpdate.mutate(ctx, m)
 	case *InviteCodeMutation:
 		return c.InviteCode.mutate(ctx, m)
 	case *LifecycleHookMutation:
@@ -1497,6 +1523,139 @@ func (c *BrokerSecretClient) mutate(ctx context.Context, m *BrokerSecretMutation
 	}
 }
 
+// DiscordPendingLinkClient is a client for the DiscordPendingLink schema.
+type DiscordPendingLinkClient struct {
+	config
+}
+
+// NewDiscordPendingLinkClient returns a client for the DiscordPendingLink from the given config.
+func NewDiscordPendingLinkClient(c config) *DiscordPendingLinkClient {
+	return &DiscordPendingLinkClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `discordpendinglink.Hooks(f(g(h())))`.
+func (c *DiscordPendingLinkClient) Use(hooks ...Hook) {
+	c.hooks.DiscordPendingLink = append(c.hooks.DiscordPendingLink, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `discordpendinglink.Intercept(f(g(h())))`.
+func (c *DiscordPendingLinkClient) Intercept(interceptors ...Interceptor) {
+	c.inters.DiscordPendingLink = append(c.inters.DiscordPendingLink, interceptors...)
+}
+
+// Create returns a builder for creating a DiscordPendingLink entity.
+func (c *DiscordPendingLinkClient) Create() *DiscordPendingLinkCreate {
+	mutation := newDiscordPendingLinkMutation(c.config, OpCreate)
+	return &DiscordPendingLinkCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of DiscordPendingLink entities.
+func (c *DiscordPendingLinkClient) CreateBulk(builders ...*DiscordPendingLinkCreate) *DiscordPendingLinkCreateBulk {
+	return &DiscordPendingLinkCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *DiscordPendingLinkClient) MapCreateBulk(slice any, setFunc func(*DiscordPendingLinkCreate, int)) *DiscordPendingLinkCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &DiscordPendingLinkCreateBulk{err: fmt.Errorf("calling to DiscordPendingLinkClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*DiscordPendingLinkCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &DiscordPendingLinkCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for DiscordPendingLink.
+func (c *DiscordPendingLinkClient) Update() *DiscordPendingLinkUpdate {
+	mutation := newDiscordPendingLinkMutation(c.config, OpUpdate)
+	return &DiscordPendingLinkUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *DiscordPendingLinkClient) UpdateOne(_m *DiscordPendingLink) *DiscordPendingLinkUpdateOne {
+	mutation := newDiscordPendingLinkMutation(c.config, OpUpdateOne, withDiscordPendingLink(_m))
+	return &DiscordPendingLinkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *DiscordPendingLinkClient) UpdateOneID(id int) *DiscordPendingLinkUpdateOne {
+	mutation := newDiscordPendingLinkMutation(c.config, OpUpdateOne, withDiscordPendingLinkID(id))
+	return &DiscordPendingLinkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for DiscordPendingLink.
+func (c *DiscordPendingLinkClient) Delete() *DiscordPendingLinkDelete {
+	mutation := newDiscordPendingLinkMutation(c.config, OpDelete)
+	return &DiscordPendingLinkDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *DiscordPendingLinkClient) DeleteOne(_m *DiscordPendingLink) *DiscordPendingLinkDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *DiscordPendingLinkClient) DeleteOneID(id int) *DiscordPendingLinkDeleteOne {
+	builder := c.Delete().Where(discordpendinglink.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &DiscordPendingLinkDeleteOne{builder}
+}
+
+// Query returns a query builder for DiscordPendingLink.
+func (c *DiscordPendingLinkClient) Query() *DiscordPendingLinkQuery {
+	return &DiscordPendingLinkQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeDiscordPendingLink},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a DiscordPendingLink entity by its id.
+func (c *DiscordPendingLinkClient) Get(ctx context.Context, id int) (*DiscordPendingLink, error) {
+	return c.Query().Where(discordpendinglink.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *DiscordPendingLinkClient) GetX(ctx context.Context, id int) *DiscordPendingLink {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *DiscordPendingLinkClient) Hooks() []Hook {
+	return c.hooks.DiscordPendingLink
+}
+
+// Interceptors returns the client interceptors.
+func (c *DiscordPendingLinkClient) Interceptors() []Interceptor {
+	return c.inters.DiscordPendingLink
+}
+
+func (c *DiscordPendingLinkClient) mutate(ctx context.Context, m *DiscordPendingLinkMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&DiscordPendingLinkCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&DiscordPendingLinkUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&DiscordPendingLinkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&DiscordPendingLinkDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown DiscordPendingLink mutation op: %q", m.Op())
+	}
+}
+
 // EnvVarClient is a client for the EnvVar schema.
 type EnvVarClient struct {
 	config
@@ -2420,6 +2579,272 @@ func (c *HarnessConfigClient) mutate(ctx context.Context, m *HarnessConfigMutati
 		return (&HarnessConfigDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown HarnessConfig mutation op: %q", m.Op())
+	}
+}
+
+// IntegrationConfigClient is a client for the IntegrationConfig schema.
+type IntegrationConfigClient struct {
+	config
+}
+
+// NewIntegrationConfigClient returns a client for the IntegrationConfig from the given config.
+func NewIntegrationConfigClient(c config) *IntegrationConfigClient {
+	return &IntegrationConfigClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `integrationconfig.Hooks(f(g(h())))`.
+func (c *IntegrationConfigClient) Use(hooks ...Hook) {
+	c.hooks.IntegrationConfig = append(c.hooks.IntegrationConfig, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `integrationconfig.Intercept(f(g(h())))`.
+func (c *IntegrationConfigClient) Intercept(interceptors ...Interceptor) {
+	c.inters.IntegrationConfig = append(c.inters.IntegrationConfig, interceptors...)
+}
+
+// Create returns a builder for creating a IntegrationConfig entity.
+func (c *IntegrationConfigClient) Create() *IntegrationConfigCreate {
+	mutation := newIntegrationConfigMutation(c.config, OpCreate)
+	return &IntegrationConfigCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of IntegrationConfig entities.
+func (c *IntegrationConfigClient) CreateBulk(builders ...*IntegrationConfigCreate) *IntegrationConfigCreateBulk {
+	return &IntegrationConfigCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *IntegrationConfigClient) MapCreateBulk(slice any, setFunc func(*IntegrationConfigCreate, int)) *IntegrationConfigCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &IntegrationConfigCreateBulk{err: fmt.Errorf("calling to IntegrationConfigClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*IntegrationConfigCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &IntegrationConfigCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for IntegrationConfig.
+func (c *IntegrationConfigClient) Update() *IntegrationConfigUpdate {
+	mutation := newIntegrationConfigMutation(c.config, OpUpdate)
+	return &IntegrationConfigUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *IntegrationConfigClient) UpdateOne(_m *IntegrationConfig) *IntegrationConfigUpdateOne {
+	mutation := newIntegrationConfigMutation(c.config, OpUpdateOne, withIntegrationConfig(_m))
+	return &IntegrationConfigUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *IntegrationConfigClient) UpdateOneID(id uuid.UUID) *IntegrationConfigUpdateOne {
+	mutation := newIntegrationConfigMutation(c.config, OpUpdateOne, withIntegrationConfigID(id))
+	return &IntegrationConfigUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for IntegrationConfig.
+func (c *IntegrationConfigClient) Delete() *IntegrationConfigDelete {
+	mutation := newIntegrationConfigMutation(c.config, OpDelete)
+	return &IntegrationConfigDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *IntegrationConfigClient) DeleteOne(_m *IntegrationConfig) *IntegrationConfigDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *IntegrationConfigClient) DeleteOneID(id uuid.UUID) *IntegrationConfigDeleteOne {
+	builder := c.Delete().Where(integrationconfig.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &IntegrationConfigDeleteOne{builder}
+}
+
+// Query returns a query builder for IntegrationConfig.
+func (c *IntegrationConfigClient) Query() *IntegrationConfigQuery {
+	return &IntegrationConfigQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeIntegrationConfig},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a IntegrationConfig entity by its id.
+func (c *IntegrationConfigClient) Get(ctx context.Context, id uuid.UUID) (*IntegrationConfig, error) {
+	return c.Query().Where(integrationconfig.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *IntegrationConfigClient) GetX(ctx context.Context, id uuid.UUID) *IntegrationConfig {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *IntegrationConfigClient) Hooks() []Hook {
+	return c.hooks.IntegrationConfig
+}
+
+// Interceptors returns the client interceptors.
+func (c *IntegrationConfigClient) Interceptors() []Interceptor {
+	return c.inters.IntegrationConfig
+}
+
+func (c *IntegrationConfigClient) mutate(ctx context.Context, m *IntegrationConfigMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&IntegrationConfigCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&IntegrationConfigUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&IntegrationConfigUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&IntegrationConfigDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown IntegrationConfig mutation op: %q", m.Op())
+	}
+}
+
+// IntegrationUpdateClient is a client for the IntegrationUpdate schema.
+type IntegrationUpdateClient struct {
+	config
+}
+
+// NewIntegrationUpdateClient returns a client for the IntegrationUpdate from the given config.
+func NewIntegrationUpdateClient(c config) *IntegrationUpdateClient {
+	return &IntegrationUpdateClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `integrationupdate.Hooks(f(g(h())))`.
+func (c *IntegrationUpdateClient) Use(hooks ...Hook) {
+	c.hooks.IntegrationUpdate = append(c.hooks.IntegrationUpdate, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `integrationupdate.Intercept(f(g(h())))`.
+func (c *IntegrationUpdateClient) Intercept(interceptors ...Interceptor) {
+	c.inters.IntegrationUpdate = append(c.inters.IntegrationUpdate, interceptors...)
+}
+
+// Create returns a builder for creating a IntegrationUpdate entity.
+func (c *IntegrationUpdateClient) Create() *IntegrationUpdateCreate {
+	mutation := newIntegrationUpdateMutation(c.config, OpCreate)
+	return &IntegrationUpdateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of IntegrationUpdate entities.
+func (c *IntegrationUpdateClient) CreateBulk(builders ...*IntegrationUpdateCreate) *IntegrationUpdateCreateBulk {
+	return &IntegrationUpdateCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *IntegrationUpdateClient) MapCreateBulk(slice any, setFunc func(*IntegrationUpdateCreate, int)) *IntegrationUpdateCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &IntegrationUpdateCreateBulk{err: fmt.Errorf("calling to IntegrationUpdateClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*IntegrationUpdateCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &IntegrationUpdateCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for IntegrationUpdate.
+func (c *IntegrationUpdateClient) Update() *IntegrationUpdateUpdate {
+	mutation := newIntegrationUpdateMutation(c.config, OpUpdate)
+	return &IntegrationUpdateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *IntegrationUpdateClient) UpdateOne(_m *IntegrationUpdate) *IntegrationUpdateUpdateOne {
+	mutation := newIntegrationUpdateMutation(c.config, OpUpdateOne, withIntegrationUpdate(_m))
+	return &IntegrationUpdateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *IntegrationUpdateClient) UpdateOneID(id uuid.UUID) *IntegrationUpdateUpdateOne {
+	mutation := newIntegrationUpdateMutation(c.config, OpUpdateOne, withIntegrationUpdateID(id))
+	return &IntegrationUpdateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for IntegrationUpdate.
+func (c *IntegrationUpdateClient) Delete() *IntegrationUpdateDelete {
+	mutation := newIntegrationUpdateMutation(c.config, OpDelete)
+	return &IntegrationUpdateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *IntegrationUpdateClient) DeleteOne(_m *IntegrationUpdate) *IntegrationUpdateDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *IntegrationUpdateClient) DeleteOneID(id uuid.UUID) *IntegrationUpdateDeleteOne {
+	builder := c.Delete().Where(integrationupdate.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &IntegrationUpdateDeleteOne{builder}
+}
+
+// Query returns a query builder for IntegrationUpdate.
+func (c *IntegrationUpdateClient) Query() *IntegrationUpdateQuery {
+	return &IntegrationUpdateQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeIntegrationUpdate},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a IntegrationUpdate entity by its id.
+func (c *IntegrationUpdateClient) Get(ctx context.Context, id uuid.UUID) (*IntegrationUpdate, error) {
+	return c.Query().Where(integrationupdate.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *IntegrationUpdateClient) GetX(ctx context.Context, id uuid.UUID) *IntegrationUpdate {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *IntegrationUpdateClient) Hooks() []Hook {
+	return c.hooks.IntegrationUpdate
+}
+
+// Interceptors returns the client interceptors.
+func (c *IntegrationUpdateClient) Interceptors() []Interceptor {
+	return c.inters.IntegrationUpdate
+}
+
+func (c *IntegrationUpdateClient) mutate(ctx context.Context, m *IntegrationUpdateMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&IntegrationUpdateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&IntegrationUpdateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&IntegrationUpdateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&IntegrationUpdateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown IntegrationUpdate mutation op: %q", m.Op())
 	}
 }
 
@@ -5614,22 +6039,24 @@ func (c *UserAccessTokenClient) mutate(ctx context.Context, m *UserAccessTokenMu
 type (
 	hooks struct {
 		AccessPolicy, Agent, AllowListEntry, ApiKey, BrokerDispatch, BrokerJoinToken,
-		BrokerSecret, EnvVar, GCPServiceAccount, GithubInstallation, Group,
-		GroupMembership, HarnessConfig, InviteCode, LifecycleHook,
-		LifecycleHookAgentPhase, MaintenanceOperation, MaintenanceOperationRun,
-		Message, Notification, NotificationSubscription, PolicyBinding, Project,
-		ProjectContributor, ProjectSyncState, RuntimeBroker, Schedule, ScheduledEvent,
-		Secret, Skill, SkillRegistry, SkillVersion, SubscriptionTemplate, Template,
-		User, UserAccessToken []ent.Hook
+		BrokerSecret, DiscordPendingLink, EnvVar, GCPServiceAccount,
+		GithubInstallation, Group, GroupMembership, HarnessConfig, IntegrationConfig,
+		IntegrationUpdate, InviteCode, LifecycleHook, LifecycleHookAgentPhase,
+		MaintenanceOperation, MaintenanceOperationRun, Message, Notification,
+		NotificationSubscription, PolicyBinding, Project, ProjectContributor,
+		ProjectSyncState, RuntimeBroker, Schedule, ScheduledEvent, Secret, Skill,
+		SkillRegistry, SkillVersion, SubscriptionTemplate, Template, User,
+		UserAccessToken []ent.Hook
 	}
 	inters struct {
 		AccessPolicy, Agent, AllowListEntry, ApiKey, BrokerDispatch, BrokerJoinToken,
-		BrokerSecret, EnvVar, GCPServiceAccount, GithubInstallation, Group,
-		GroupMembership, HarnessConfig, InviteCode, LifecycleHook,
-		LifecycleHookAgentPhase, MaintenanceOperation, MaintenanceOperationRun,
-		Message, Notification, NotificationSubscription, PolicyBinding, Project,
-		ProjectContributor, ProjectSyncState, RuntimeBroker, Schedule, ScheduledEvent,
-		Secret, Skill, SkillRegistry, SkillVersion, SubscriptionTemplate, Template,
-		User, UserAccessToken []ent.Interceptor
+		BrokerSecret, DiscordPendingLink, EnvVar, GCPServiceAccount,
+		GithubInstallation, Group, GroupMembership, HarnessConfig, IntegrationConfig,
+		IntegrationUpdate, InviteCode, LifecycleHook, LifecycleHookAgentPhase,
+		MaintenanceOperation, MaintenanceOperationRun, Message, Notification,
+		NotificationSubscription, PolicyBinding, Project, ProjectContributor,
+		ProjectSyncState, RuntimeBroker, Schedule, ScheduledEvent, Secret, Skill,
+		SkillRegistry, SkillVersion, SubscriptionTemplate, Template, User,
+		UserAccessToken []ent.Interceptor
 	}
 )

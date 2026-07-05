@@ -27,6 +27,9 @@ type BrokerJoinToken func(*sql.Selector)
 // BrokerSecret is the predicate function for brokersecret builders.
 type BrokerSecret func(*sql.Selector)
 
+// DiscordPendingLink is the predicate function for discordpendinglink builders.
+type DiscordPendingLink func(*sql.Selector)
+
 // EnvVar is the predicate function for envvar builders.
 type EnvVar func(*sql.Selector)
 
@@ -44,6 +47,12 @@ type GroupMembership func(*sql.Selector)
 
 // HarnessConfig is the predicate function for harnessconfig builders.
 type HarnessConfig func(*sql.Selector)
+
+// IntegrationConfig is the predicate function for integrationconfig builders.
+type IntegrationConfig func(*sql.Selector)
+
+// IntegrationUpdate is the predicate function for integrationupdate builders.
+type IntegrationUpdate func(*sql.Selector)
 
 // InviteCode is the predicate function for invitecode builders.
 type InviteCode func(*sql.Selector)

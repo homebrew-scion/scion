@@ -60,6 +60,14 @@ const (
 	// LockSchemaMigration guards startup schema migration and built-in seed data
 	// so concurrent Hub replicas do not race while applying Ent migrations.
 	LockSchemaMigration AdvisoryLockKey = 0x5C100008
+	// LockDiscordGateway serializes the Discord Gateway WebSocket connection
+	// across standalone Discord bot replicas. Only the lock holder opens the
+	// Gateway; standby instances retry periodically and promote on acquisition.
+	LockDiscordGateway AdvisoryLockKey = 0x5C100009
+
+	// LockTelegramWebhook serializes the Telegram setWebhook registration
+	// call so only one standalone instance registers the webhook URL at a time.
+	LockTelegramWebhook AdvisoryLockKey = 0x5C10000A
 
 	// LockWorkspaceProvision is the CLASS ID for per-project workspace
 	// provisioning locks. It is used with the two-int advisory lock form

@@ -19,12 +19,15 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokerdispatch"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokerjointoken"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/brokersecret"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/discordpendinglink"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/envvar"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/gcpserviceaccount"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/githubinstallation"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/group"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/groupmembership"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/harnessconfig"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationconfig"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationupdate"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/invitecode"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/lifecyclehook"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/lifecyclehookagentphase"
@@ -115,12 +118,15 @@ func checkColumn(t, c string) error {
 			brokerdispatch.Table:           brokerdispatch.ValidColumn,
 			brokerjointoken.Table:          brokerjointoken.ValidColumn,
 			brokersecret.Table:             brokersecret.ValidColumn,
+			discordpendinglink.Table:       discordpendinglink.ValidColumn,
 			envvar.Table:                   envvar.ValidColumn,
 			gcpserviceaccount.Table:        gcpserviceaccount.ValidColumn,
 			githubinstallation.Table:       githubinstallation.ValidColumn,
 			group.Table:                    group.ValidColumn,
 			groupmembership.Table:          groupmembership.ValidColumn,
 			harnessconfig.Table:            harnessconfig.ValidColumn,
+			integrationconfig.Table:        integrationconfig.ValidColumn,
+			integrationupdate.Table:        integrationupdate.ValidColumn,
 			invitecode.Table:               invitecode.ValidColumn,
 			lifecyclehook.Table:            lifecyclehook.ValidColumn,
 			lifecyclehookagentphase.Table:  lifecyclehookagentphase.ValidColumn,
