@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: "v${{ needs.detect-release.outputs.new_version }}"
+          ref: ${{ inputs.force_version != '' && 'main' || format('v{0}', needs.detect-release.outputs.new_version) }}
           fetch-depth: 0
 
       - name: Build and push container images
