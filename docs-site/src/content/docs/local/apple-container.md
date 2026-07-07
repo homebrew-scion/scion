@@ -17,7 +17,42 @@ The DNS setup modifies macOS PF (packet filter) rules, which require root access
 
 ## Automating after reboot
 
-To avoid running this manually after each reboot, you can add it to a launchd plist or run it as part of your startup scripts.
+Because the command requires root, it must be installed as a **system-level LaunchDaemon** (not a user LaunchAgent). User-level agents run without a terminal, so `sudo` cannot prompt for a password.
+
+Create `/Library/LaunchDaemons/org.scion.apple-container-dns.plist` as root:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.scion.apple-container-dns</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/container</string>
+        <string>system</string>
+        <string>dns</string>
+        <string>create</string>
+        <string>host.containers.internal</string>
+        <string>--localhost</string>
+        <string>203.0.113.1</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+```
+
+:::note
+Adjust the path `/opt/homebrew/bin/container` if Apple Container is installed elsewhere on your system.
+:::
+
+Load the daemon (runs immediately and on every subsequent boot):
+
+```bash
+sudo launchctl bootstrap system /Library/LaunchDaemons/org.scion.apple-container-dns.plist
+```
 
 ## Verification
 
