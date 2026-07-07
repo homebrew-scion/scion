@@ -72,6 +72,9 @@ func GetRuntime(projectPath string, profileName string) Runtime {
 			if _, err := exec.LookPath("podman"); err == nil {
 				runtimeType = "podman"
 				util.Debugf("GetRuntime: detected 'podman' on macOS")
+			} else if p := findPodmanNonStandardPath(); p != "" {
+				runtimeType = "podman"
+				util.Debugf("GetRuntime: found podman at non-standard path %s on macOS", p)
 			} else if _, err := exec.LookPath("docker"); err == nil {
 				runtimeType = "docker"
 				util.Debugf("GetRuntime: detected 'docker' on macOS")
@@ -110,7 +113,13 @@ func GetRuntime(projectPath string, profileName string) Runtime {
 		}
 		return dr
 	case "podman":
-		pr := NewPodmanRuntime()
+		podmanCmd := ""
+		if runtime.GOOS == "darwin" {
+			if _, err := exec.LookPath("podman"); err != nil {
+				podmanCmd = findPodmanNonStandardPath()
+			}
+		}
+		pr := NewPodmanRuntime(podmanCmd)
 		if rtConfig.Host != "" {
 			if p, ok := pr.(*PodmanRuntime); ok {
 				p.Host = rtConfig.Host
@@ -146,6 +155,19 @@ func GetRuntime(projectPath string, profileName string) Runtime {
 
 	// Fallback should not be reached if logic is correct, but default to Docker
 	return NewDockerRuntime()
+}
+
+func findPodmanNonStandardPath() string {
+	for _, p := range []string{
+		"/opt/podman/bin/podman",
+		"/usr/local/bin/podman",
+		"/usr/bin/podman",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 type ErrorRuntime struct {

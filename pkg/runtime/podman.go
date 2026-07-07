@@ -37,16 +37,19 @@ type PodmanRuntime struct {
 
 // NewPodmanRuntime creates a new PodmanRuntime after verifying that the podman
 // binary exists and meets the minimum version requirement (4.x+).
-// Returns an ErrorRuntime if validation fails.
-func NewPodmanRuntime() Runtime {
+// If cmdOverride is non-empty, it is used as the podman binary path instead of
+// looking up "podman" on $PATH. Returns an ErrorRuntime if validation fails.
+func NewPodmanRuntime(cmdOverride string) Runtime {
 	command := "podman"
-
-	// Verify podman is on PATH
-	path, err := exec.LookPath(command)
-	if err != nil {
-		return &ErrorRuntime{Err: fmt.Errorf("podman not found on PATH: %w", err)}
+	if cmdOverride != "" {
+		command = cmdOverride
 	}
-	_ = path
+
+	if cmdOverride == "" {
+		if _, err := exec.LookPath(command); err != nil {
+			return &ErrorRuntime{Err: fmt.Errorf("podman not found on PATH: %w", err)}
+		}
+	}
 
 	// Check version: minimum 4.x
 	out, err := exec.Command(command, "--version").Output()
