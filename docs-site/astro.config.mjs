@@ -110,6 +110,7 @@ export default defineConfig({
 						{ label: 'Agent Credentials', slug: 'local/agent-credentials' },
 						{ label: 'Custom Images', slug: 'local/custom-images' },
 						{ label: 'Tmux Sessions', slug: 'local/tmux' },
+						{ label: 'Apple Container DNS', slug: 'local/apple-container' },
 						{ label: 'Shell Completions', slug: 'local/completions' },
 					],
 				},
