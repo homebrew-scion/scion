@@ -39,11 +39,11 @@ export class ScionDirBrowser extends LitElement {
   @state() private entries: DirEntry[] = [];
   @state() private loading = false;
   @state() private error: string | null = null;
+  @state() private filterText = '';
   @state() private newFolderMode = false;
   @state() private newFolderName = '';
   @state() private newFolderError: string | null = null;
   @state() private creatingFolder = false;
-  @state() private filterText = '';
 
   static override styles = css`
     :host {
@@ -84,6 +84,17 @@ export class ScionDirBrowser extends LitElement {
 
     .breadcrumb-sep {
       color: var(--scion-text-muted, #64748b);
+    }
+
+    .filter-input {
+      flex: 1;
+      min-width: 6rem;
+    }
+
+    .filter-input::part(base) {
+      border: none;
+      background: transparent;
+      box-shadow: none;
     }
 
     .entry-list {
@@ -184,6 +195,7 @@ export class ScionDirBrowser extends LitElement {
   private async navigate(path: string): Promise<void> {
     this.loading = true;
     this.error = null;
+    this.filterText = '';
     this.newFolderMode = false;
 
     try {
@@ -205,8 +217,7 @@ export class ScionDirBrowser extends LitElement {
 
   private onEntryClick(entry: DirEntry): void {
     if (!entry.isDir) return;
-    const newPath = this.currentPath + '/' + entry.name;
-    void this.navigate(newPath);
+    void this.navigate(this.joinPath(this.currentPath, entry.name));
   }
 
   private navigateUp(): void {
@@ -265,7 +276,7 @@ export class ScionDirBrowser extends LitElement {
       }
       this.newFolderMode = false;
       this.newFolderName = '';
-      void this.navigate(this.currentPath);
+      void this.navigate(this.joinPath(this.currentPath, name));
     } catch {
       this.newFolderError = 'Failed to connect to the server.';
     } finally {
@@ -293,7 +304,7 @@ export class ScionDirBrowser extends LitElement {
       const dirMatches = this.filteredEntries.filter(entry => entry.isDir);
       if (dirMatches.length === 1) {
         this.filterText = '';
-        void this.navigate(this.currentPath + '/' + dirMatches[0].name);
+        void this.navigate(this.joinPath(this.currentPath, dirMatches[0].name));
       } else if (dirMatches.length > 1) {
         const prefix = this.commonPrefix(dirMatches.map(d => d.name));
         if (prefix.length > this.filterText.length) {
@@ -306,10 +317,13 @@ export class ScionDirBrowser extends LitElement {
       const matches = this.filteredEntries.filter(entry => entry.isDir);
       if (matches.length === 1) {
         this.filterText = '';
-        const newPath = this.currentPath + '/' + matches[0].name;
-        void this.navigate(newPath);
+        void this.navigate(this.joinPath(this.currentPath, matches[0].name));
       }
     }
+  }
+
+  private joinPath(base: string, name: string): string {
+    return base.endsWith('/') ? base + name : base + '/' + name;
   }
 
   private commonPrefix(strings: string[]): string {
@@ -337,6 +351,14 @@ export class ScionDirBrowser extends LitElement {
             <span class="breadcrumb-sep">/</span>
             <button class="breadcrumb-segment" @click=${() => this.navigateToBreadcrumb(i)}>${seg}</button>
           `)}
+          <sl-input
+            class="filter-input"
+            size="small"
+            placeholder="Type to filter..."
+            .value=${this.filterText}
+            @sl-input=${(e: Event) => this.onFilterInput(e)}
+            @keydown=${(e: KeyboardEvent) => this.onFilterKeydown(e)}
+          ></sl-input>
         </div>
 
         ${this.loading ? html`
@@ -366,6 +388,9 @@ export class ScionDirBrowser extends LitElement {
                 <sl-icon name="arrow-up"></sl-icon>
                 <span class="name">..</span>
               </div>
+            ` : nothing}
+            ${this.filteredEntries.length === 0 && this.filterText ? html`
+              <div class="empty-state">No matches for "${this.filterText}"</div>
             ` : nothing}
             ${this.filteredEntries.map(e => html`
               <div class="entry ${e.isDir ? '' : 'is-file'}" @click=${() => this.onEntryClick(e)}>

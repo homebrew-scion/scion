@@ -51,6 +51,10 @@ func TestDefaultGlobalConfig(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected log level 'info', got %q", cfg.LogLevel)
 	}
+
+	if !cfg.RuntimeBroker.AllowContainerScriptHarnesses {
+		t.Error("expected AllowContainerScriptHarnesses to be true by default")
+	}
 }
 
 func TestLoadGlobalConfigDefaults(t *testing.T) {
@@ -156,6 +160,29 @@ hub:
 
 	if cfg.Hub.Port != 9999 {
 		t.Errorf("expected Hub port 9999, got %d", cfg.Hub.Port)
+	}
+}
+
+func TestLegacyConfigAllowContainerScriptHarnesses(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "server.yaml")
+
+	configContent := `
+runtimeBroker:
+  enabled: true
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadGlobalConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if !cfg.RuntimeBroker.AllowContainerScriptHarnesses {
+		t.Error("expected AllowContainerScriptHarnesses to be true when loading legacy config with empty broker section")
 	}
 }
 

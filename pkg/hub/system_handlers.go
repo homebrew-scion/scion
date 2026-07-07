@@ -109,9 +109,10 @@ func (s *Server) handleSystemCheck(w http.ResponseWriter, r *http.Request) {
 // --- 2.2: Runtime GET/PUT ---
 
 type systemRuntimeResponse struct {
-	Detected   string `json:"detected"`
-	Configured string `json:"configured"`
-	Available  bool   `json:"available"`
+	Detected          string   `json:"detected"`
+	Configured        string   `json:"configured"`
+	Available         bool     `json:"available"`
+	AvailableRuntimes []string `json:"availableRuntimes,omitempty"`
 }
 
 type putRuntimeRequest struct {
@@ -143,6 +144,7 @@ func (s *Server) handleSystemRuntime(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRuntime(w http.ResponseWriter, r *http.Request) {
 	detected, detectErr := config.DetectLocalRuntime()
 	available := detectErr == nil
+	allRuntimes := config.DetectAllLocalRuntimes()
 
 	var configured string
 	globalDir, err := config.GetGlobalDir()
@@ -161,9 +163,10 @@ func (s *Server) handleGetRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, systemRuntimeResponse{
-		Detected:   detected,
-		Configured: configured,
-		Available:  available,
+		Detected:          detected,
+		Configured:        configured,
+		Available:         available,
+		AvailableRuntimes: allRuntimes,
 	})
 }
 
@@ -193,7 +196,14 @@ func (s *Server) handlePutRuntime(w http.ResponseWriter, r *http.Request) {
 
 	activeProfile := vs.ActiveProfile
 	if activeProfile == "" {
-		activeProfile = "default"
+		// The single-file load doesn't merge embedded defaults, so ActiveProfile
+		// may be empty. Resolve the effective active profile so we update the same
+		// profile the server will read at startup (e.g. "local" from defaults).
+		if effective, _, eErr := config.LoadEffectiveSettings(""); eErr == nil && effective != nil && effective.ActiveProfile != "" {
+			activeProfile = effective.ActiveProfile
+		} else {
+			activeProfile = "default"
+		}
 	}
 
 	if vs.Profiles == nil {
@@ -208,10 +218,75 @@ func (s *Server) handlePutRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Update the image checker so it uses the newly selected runtime for
+	// local image existence checks instead of the previously configured one.
+	rt := runtime.GetRuntime("", "")
+	s.SetLocalImageChecker(rt)
+
 	writeJSON(w, http.StatusOK, systemRuntimeResponse{
 		Detected:   req.Runtime,
 		Configured: req.Runtime,
 		Available:  true,
+	})
+}
+
+// --- 2.2b: Registry PUT ---
+
+type putRegistryRequest struct {
+	ImageRegistry string `json:"image_registry"`
+}
+
+type putRegistryResponse struct {
+	ImageRegistry string `json:"image_registry"`
+}
+
+func (s *Server) handleSystemRegistry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		MethodNotAllowed(w)
+		return
+	}
+
+	if err := assertLoopback(r); err != nil {
+		writeError(w, http.StatusForbidden, ErrCodeForbidden, err.Error(), nil)
+		return
+	}
+
+	var req putRegistryRequest
+	if err := readJSON(r, &req); err != nil {
+		BadRequest(w, "invalid request body")
+		return
+	}
+
+	if req.ImageRegistry == "" {
+		ValidationError(w, "image_registry must not be empty", nil)
+		return
+	}
+
+	globalDir, err := config.GetGlobalDir()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "cannot determine config directory", nil)
+		return
+	}
+
+	vs, err := config.LoadSingleFileVersioned(globalDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to load settings", nil)
+		return
+	}
+
+	vs.ImageRegistry = req.ImageRegistry
+
+	if err := config.SaveVersionedSettings(globalDir, vs); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to save image registry setting", nil)
+		return
+	}
+
+	s.mu.Lock()
+	s.config.MaintenanceConfig.ImageRegistry = req.ImageRegistry
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, putRegistryResponse{
+		ImageRegistry: req.ImageRegistry,
 	})
 }
 
@@ -360,7 +435,14 @@ func (s *Server) handleSystemInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Harnesses) == 0 {
+	var selected []string
+	for _, name := range req.Harnesses {
+		if name = strings.TrimSpace(name); name != "" {
+			selected = append(selected, name)
+		}
+	}
+
+	if len(selected) == 0 {
 		ValidationError(w, "at least one harness must be specified", nil)
 		return
 	}
@@ -371,26 +453,97 @@ func (s *Server) handleSystemInit(w http.ResponseWriter, r *http.Request) {
 		allowed[n] = true
 	}
 
-	for _, name := range req.Harnesses {
+	for _, name := range selected {
 		if !allowed[name] {
 			ValidationError(w, fmt.Sprintf("unknown harness %q", name), nil)
 			return
 		}
 	}
 
-	opts := config.InitMachineOpts{
-		SelectedHarnessConfigs: req.Harnesses,
+	// Partition requested harnesses into catalog-based and embed-only.
+	// Embed-only harnesses (e.g. Gemini) are handled by the SeedHarnessConfig
+	// loop in InitMachine and must not appear in SelectedHarnessConfigs, which
+	// only searches the bundled catalog.
+	embedOnlyNames := make(map[string]bool)
+	var embedOnlyInstances []api.Harness
+	for _, h := range harness.EmbedOnlyHarnesses() {
+		embedOnlyNames[h.Name()] = true
+		for _, name := range selected {
+			if h.Name() == name {
+				embedOnlyInstances = append(embedOnlyInstances, h)
+				break
+			}
+		}
 	}
-	if err := config.InitMachine(nil, opts); err != nil {
+
+	catalogNames := []string{}
+	for _, name := range selected {
+		if !embedOnlyNames[name] {
+			catalogNames = append(catalogNames, name)
+		}
+	}
+
+	opts := config.InitMachineOpts{
+		SelectedHarnessConfigs: catalogNames,
+	}
+	if err := config.InitMachine(embedOnlyInstances, opts); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrCodeInternalError,
 			fmt.Sprintf("initialization failed: %s", err.Error()), nil)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, systemInitResponse{
-		OK:          true,
-		Initialized: true,
-	})
+	// Clean up harness configs that were NOT selected: remove from disk and
+	// from the Hub DB so a previous init's choices don't linger.
+	s.cleanupUnselectedHarnessConfigs(r.Context(), selected)
+
+	writeJSON(w, http.StatusOK, systemInitResponse{OK: true, Initialized: true})
+}
+
+// cleanupUnselectedHarnessConfigs removes harness configs that are not in
+// the selected list from both disk and the Hub database.
+func (s *Server) cleanupUnselectedHarnessConfigs(ctx context.Context, selected []string) {
+	selectedSet := make(map[string]bool, len(selected))
+	for _, name := range selected {
+		selectedSet[name] = true
+	}
+
+	// Remove unselected harness-config directories from disk.
+	globalDir, err := config.GetGlobalDir()
+	if err == nil {
+		harnessConfigsDir := filepath.Join(globalDir, "harness-configs")
+		entries, err := os.ReadDir(harnessConfigsDir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				if !selectedSet[e.Name()] {
+					path := filepath.Join(harnessConfigsDir, e.Name())
+					if err := os.RemoveAll(path); err != nil {
+						slog.Warn("cleanupUnselectedHarnessConfigs: failed to remove dir", "path", path, "error", err)
+					}
+				}
+			}
+		}
+	}
+
+	// Remove unselected global harness-config records from the Hub DB.
+	if s.store != nil {
+		configs, err := s.store.ListHarnessConfigs(ctx, store.HarnessConfigFilter{
+			Scope: store.HarnessConfigScopeGlobal,
+		}, store.ListOptions{Limit: 200})
+		if err != nil {
+			slog.Warn("cleanupUnselectedHarnessConfigs: failed to list configs", "error", err)
+			return
+		}
+		for _, hc := range configs.Items {
+			if !selectedSet[hc.Name] {
+				if err := s.store.DeleteHarnessConfig(ctx, hc.ID); err != nil {
+					slog.Warn("cleanupUnselectedHarnessConfigs: failed to delete config", "name", hc.Name, "id", hc.ID, "error", err)
+				}
+			}
+		}
+	}
 }
 
 // --- 4.1: Image Pull ---
@@ -432,15 +585,6 @@ func (s *Server) handleSystemImagesPull(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	allowed := map[string]bool{"claude": true, "gemini": true, "codex": true, "opencode": true}
-	for _, h := range req.Harnesses {
-		if !allowed[h] {
-			s.imagePullActive.Store(false)
-			ValidationError(w, fmt.Sprintf("unknown harness %q", h), nil)
-			return
-		}
-	}
-
 	var registry string
 	globalDir, err := config.GetGlobalDir()
 	if err == nil {
@@ -462,9 +606,11 @@ func (s *Server) handleSystemImagesPull(w http.ResponseWriter, r *http.Request) 
 
 	rt := runtime.GetRuntime("", "")
 
+	requestedHarnesses := req.Harnesses
+
 	go func() {
 		defer s.imagePullActive.Store(false)
-		if err := runtime.PullImages(s.ctx, rt, req.Harnesses, registry, func(pr runtime.PullResult) {
+		if err := runtime.PullImages(s.ctx, rt, requestedHarnesses, registry, func(pr runtime.PullResult) {
 			s.events.PublishRaw("system.images."+jobID, pr)
 		}); err != nil {
 			s.events.PublishRaw("system.images."+jobID, map[string]string{
@@ -472,9 +618,31 @@ func (s *Server) handleSystemImagesPull(w http.ResponseWriter, r *http.Request) 
 				"error":  err.Error(),
 			})
 		}
+		s.syncImageStatusAfterPull(s.ctx, requestedHarnesses)
 	}()
 
 	writeJSON(w, http.StatusOK, imagePullResponse{JobID: jobID})
+}
+
+// syncImageStatusAfterPull updates the image_status of harness-configs
+// matching the pulled harnesses so the DB reflects newly-pulled images.
+func (s *Server) syncImageStatusAfterPull(ctx context.Context, harnesses []string) {
+	for _, h := range harnesses {
+		configs, err := s.store.ListHarnessConfigs(ctx, store.HarnessConfigFilter{
+			Harness: h,
+			Status:  store.HarnessConfigStatusActive,
+		}, store.ListOptions{Limit: 100})
+		if err != nil {
+			slog.Error("syncImageStatusAfterPull: list failed", "harness", h, "error", err)
+			continue
+		}
+		for _, hc := range configs.Items {
+			if hc.Config == nil || hc.Config.Image == "" {
+				continue
+			}
+			s.checkAndUpdateImageStatus(ctx, hc.ID, hc.Config.Image)
+		}
+	}
 }
 
 // --- 4.2: Image Build ---
