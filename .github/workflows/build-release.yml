@@ -98,7 +98,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          go build -ldflags "${{ steps.version.outputs.ldflags }}" -o dist/scion ./cmd/scion
+          go build -ldflags "${{ steps.version.outputs.ldflags }} -X github.com/GoogleCloudPlatform/scion/pkg/version.DefaultRegistry=ghcr.io/homebrew-scion" -o dist/scion ./cmd/scion
           tar -czvf ${{ matrix.output }}.tar.gz -C dist scion
 
       - name: Upload artifact
