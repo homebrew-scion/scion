@@ -66,46 +66,91 @@ jobs:
   build-images:
     needs: detect-release
     if: needs.detect-release.outputs.new_version != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.force_version != '' && 'main' || format('v{0}', needs.detect-release.outputs.new_version) }}
           fetch-depth: 0
 
-      - name: Build and push container images
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push images (${{ matrix.arch }})
         run: |
           VERSION="${{ needs.detect-release.outputs.new_version }}"
-          IS_PRERELEASE="${{ needs.detect-release.outputs.is_prerelease }}"
 
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-          # core-base must exist in the registry before common images can build
           bash image-build/scripts/build-images.sh \
             --registry ghcr.io/homebrew-scion \
             --target core-base \
-            --tag "v${VERSION}" \
-            --platform all \
+            --tag "v${VERSION}-${{ matrix.arch }}" \
+            --platform "${{ matrix.platform }}" \
             --push
 
           bash image-build/scripts/build-images.sh \
             --registry ghcr.io/homebrew-scion \
             --target common \
-            --tag "v${VERSION}" \
-            --platform all \
+            --tag "v${VERSION}-${{ matrix.arch }}" \
+            --platform "${{ matrix.platform }}" \
             --push
 
-          if [ "$IS_PRERELEASE" != "true" ]; then
-            IMAGES="core-base scion-base scion-claude scion-gemini scion-opencode scion-codex scion-hub"
-            for img in $IMAGES; do
+  merge-manifests:
+    needs: [detect-release, build-images]
+    if: needs.detect-release.outputs.new_version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        run: |
+          VERSION="${{ needs.detect-release.outputs.new_version }}"
+          IS_PRERELEASE="${{ needs.detect-release.outputs.is_prerelease }}"
+          REG="ghcr.io/homebrew-scion"
+
+          IMAGES="core-base scion-base scion-antigravity scion-claude scion-codex scion-copilot scion-gemini-cli scion-gen scion-hermes scion-opencode scion-hub"
+
+          for img in $IMAGES; do
+            if docker buildx imagetools inspect "${REG}/${img}:v${VERSION}-amd64" >/dev/null 2>&1 && \
+               docker buildx imagetools inspect "${REG}/${img}:v${VERSION}-arm64" >/dev/null 2>&1; then
               docker buildx imagetools create \
-                --tag "ghcr.io/homebrew-scion/${img}:latest" \
-                "ghcr.io/homebrew-scion/${img}:v${VERSION}"
-            done
-          fi
+                --tag "${REG}/${img}:v${VERSION}" \
+                "${REG}/${img}:v${VERSION}-amd64" \
+                "${REG}/${img}:v${VERSION}-arm64"
+
+              if [ "$IS_PRERELEASE" != "true" ]; then
+                docker buildx imagetools create \
+                  --tag "${REG}/${img}:latest" \
+                  "${REG}/${img}:v${VERSION}-amd64" \
+                  "${REG}/${img}:v${VERSION}-arm64"
+              fi
+            else
+              echo "WARNING: one or both arch images missing for ${img}, skipping manifest merge"
+            fi
+          done
 
   update-formula:
-    needs: [detect-release, build-images]
+    needs: [detect-release, merge-manifests]
     if: needs.detect-release.outputs.is_prerelease != 'true' && inputs.skip_formula_update != true
     runs-on: ubuntu-latest
     steps:
