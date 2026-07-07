@@ -5,7 +5,7 @@ on:
     - cron: "*/15 * * * *"
   push:
     branches:
-      - main
+      - tap-release
   workflow_dispatch:
     inputs:
       force_version:
