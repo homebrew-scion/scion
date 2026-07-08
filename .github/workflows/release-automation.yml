@@ -6,6 +6,8 @@ on:
   push:
     branches:
       - tap-release
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       force_version:
