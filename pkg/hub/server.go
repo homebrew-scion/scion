@@ -679,6 +679,7 @@ type Server struct {
 	imagePullActive  atomic.Bool
 
 	imageChecker      *imagecheck.Checker
+	imageManager      imageManager
 	imageStatusFlight singleflight.Group
 
 	// Mode 3 (HA) integration support fields.
@@ -1653,6 +1654,9 @@ func (s *Server) SetGCPTokenMetrics(m GCPTokenMetricsRecorder) {
 // checker so it can verify images via the local Docker/Podman daemon.
 func (s *Server) SetLocalImageChecker(l imagecheck.LocalImageExister) {
 	s.imageChecker.SetLocal(l)
+	if mgr, ok := l.(imageManager); ok {
+		s.imageManager = mgr
+	}
 }
 
 // GetMaintenanceState returns the runtime maintenance state.
