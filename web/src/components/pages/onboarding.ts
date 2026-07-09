@@ -1143,7 +1143,7 @@ export class ScionPageOnboarding extends LitElement {
           const fullImageName = d['image'] as string;
           const status = d['status'] as string;
 
-          if (typeof d['index'] === 'number' && typeof d['total'] === 'number') {
+          if (status !== 'queued' && typeof d['index'] === 'number' && typeof d['total'] === 'number') {
             this.pullIndex = d['index'] as number;
             this.pullTotal = d['total'] as number;
           }
