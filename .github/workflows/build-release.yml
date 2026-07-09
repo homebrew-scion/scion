@@ -101,9 +101,9 @@ jobs:
           go build -ldflags "${{ steps.version.outputs.ldflags }} -X github.com/GoogleCloudPlatform/scion/pkg/version.DefaultRegistry=ghcr.io/homebrew-scion" -o dist/scion ./cmd/scion
 
           # Build the Telegram broker plugin (separate Go module; replace directive points to repo root)
-          cd extras/scion-telegram
-          go build -ldflags "-s -w" -trimpath -o ../dist/scion-plugin-telegram ./cmd/scion-plugin-telegram
-          cd -
+          # Use absolute output path and GOWORK=off to avoid workspace interference.
+          REPO_ROOT="$(pwd)"
+          (cd extras/scion-telegram && GOWORK=off go build -ldflags "-s -w" -trimpath -o "${REPO_ROOT}/dist/scion-plugin-telegram" ./cmd/scion-plugin-telegram)
 
           tar -czvf ${{ matrix.output }}.tar.gz -C dist scion scion-plugin-telegram
 
