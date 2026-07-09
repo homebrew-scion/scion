@@ -61,8 +61,8 @@ func PullImages(ctx context.Context, rt Runtime, harnesses []string, registry st
 	}
 
 	total := len(images)
-	for i, img := range images {
-		onEvent(PullResult{Image: img, Status: "queued", Index: i + 1, Total: total})
+	for _, img := range images {
+		onEvent(PullResult{Image: img, Status: "queued"})
 	}
 
 	for i, img := range images {
