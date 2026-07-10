@@ -27,6 +27,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
 	"github.com/GoogleCloudPlatform/scion/pkg/config/opsettings"
+	"github.com/GoogleCloudPlatform/scion/pkg/secret"
 	"github.com/GoogleCloudPlatform/scion/pkg/store"
 	"github.com/knadh/koanf/v2"
 )
@@ -94,6 +95,7 @@ type Layer1Snapshot struct {
 
 	// Endpoints
 	PublicURL     string
+	HubName       string
 	ImageRegistry string
 
 	// GitHub App (non-secret fields only)
@@ -567,6 +569,7 @@ func buildSnapshotFromKoanf(k *koanf.Koanf) Layer1Snapshot {
 
 	// Endpoints
 	snap.PublicURL = k.String("server.hub.public_url")
+	snap.HubName = k.String("server.hub.hub_name")
 	snap.ImageRegistry = k.String("image_registry")
 
 	// GitHub App
@@ -686,7 +689,21 @@ func ApplySnapshot(s *Server, snap Layer1Snapshot) map[string]interface{} {
 		applied = append(applied, "github_app")
 	}
 
+	// Hub name
+	if snap.HubName != "" {
+		s.config.HubName = snap.HubName
+		applied = append(applied, "hub_name")
+	}
+
 	s.mu.Unlock()
+
+	// Propagate hub_name to the GCP secret backend so new secrets get the
+	// correct label value. Log handlers have a similar limitation (§7.4).
+	if snap.HubName != "" {
+		if gcpBackend, ok := s.secretBackend.(*secret.GCPBackend); ok {
+			gcpBackend.SetHubName(snap.HubName)
+		}
+	}
 
 	// NOTE: Maintenance state is deliberately NOT applied here.
 	// Maintenance is runtime/API-owned state. In file mode, reloadSettings

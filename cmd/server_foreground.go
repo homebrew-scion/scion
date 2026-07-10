@@ -229,6 +229,9 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 		if sbErr != nil {
 			log.Printf("Warning: failed to initialize secret backend: %v", sbErr)
 		}
+		if gcpBackend, ok := secretBackend.(*secret.GCPBackend); ok {
+			gcpBackend.SetHubName(cfg.Hub.ResolveHubName())
+		}
 	}
 
 	// 10b. Initialize plugin manager
@@ -250,6 +253,7 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 		if cfg.Hub.GCPProjectID != "" {
 			mp, mpErr := hubmetrics.NewMeterProvider(ctx, cfg.Hub.GCPProjectID,
 				hubmetrics.WithHubID(hubSrv.HubID()),
+				hubmetrics.WithHubName(cfg.Hub.ResolveHubName()),
 			)
 			if mpErr != nil {
 				log.Printf("WARNING: hub metrics export disabled: %v", mpErr)
@@ -549,6 +553,8 @@ func initServerLogging(cmd *cobra.Command) (cleanups []func(), requestLogger *sl
 		component = "scion-broker"
 	}
 
+	hubName := resolveHubNameFromEnv()
+
 	// Initialize OTel logging
 	ctx := context.Background()
 	logProvider, logCleanup, otelErr := logging.InitOTelLogging(ctx, logging.OTelConfig{})
@@ -568,6 +574,7 @@ func initServerLogging(cmd *cobra.Command) (cleanups []func(), requestLogger *sl
 		logLevel := logging.ResolveLogLevel(enableDebug)
 		cfg := logging.CloudLoggingConfig{
 			Component: component,
+			HubName:   hubName,
 		}
 		ch, cloudLogCleanup, cloudErr := logging.NewCloudHandler(ctx, cfg, logLevel)
 		if cloudErr != nil {
@@ -584,12 +591,13 @@ func initServerLogging(cmd *cobra.Command) (cleanups []func(), requestLogger *sl
 		}
 	}
 
-	logging.SetupWithOTel(component, enableDebug, useGCP, logProvider, cloudHandler)
+	logging.SetupWithOTel(component, hubName, enableDebug, useGCP, logProvider, cloudHandler)
 
 	// Initialize request logger
 	reqLogCfg := logging.RequestLoggerConfig{
 		FilePath:   os.Getenv(logging.EnvRequestLogPath),
 		Component:  component,
+		HubName:    hubName,
 		UseGCP:     useGCP,
 		Foreground: serverStartForeground,
 		Level:      logging.ResolveLogLevel(enableDebug),
@@ -611,6 +619,7 @@ func initServerLogging(cmd *cobra.Command) (cleanups []func(), requestLogger *sl
 	// Initialize message logger
 	msgLogCfg := logging.MessageLoggerConfig{
 		Component: component,
+		HubName:   hubName,
 		UseGCP:    useGCP,
 		Level:     logging.ResolveLogLevel(enableDebug),
 	}
@@ -1098,6 +1107,25 @@ func parseAdminEmails(cfg *config.GlobalConfig) []string {
 	return adminEmailList
 }
 
+// resolveHubNameFromEnv resolves the hub display name from environment variables,
+// falling back to os.Hostname(). This is used during early logging init before
+// the full config is loaded. SCION_SERVER_HUB_HUBNAME (the standard koanf-derived
+// name) takes precedence; SCION_HUB_NAME is accepted as a shorter fallback for
+// simple setups.
+func resolveHubNameFromEnv() string {
+	if v := os.Getenv("SCION_SERVER_HUB_HUBNAME"); v != "" {
+		return v
+	}
+	if v := os.Getenv("SCION_HUB_NAME"); v != "" {
+		return v
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return h
+}
+
 // resolveSessionSecret resolves the deployment-wide session secret from the
 // --session-secret flag, falling back to the SCION_SERVER_SESSION_SECRET env
 // var (then SESSION_SECRET for compatibility). The same value backs both the
@@ -1121,6 +1149,7 @@ func resolveSessionSecret() string {
 func initHubServer(ctx context.Context, cfg *config.GlobalConfig, s store.Store, entClient *ent.Client, hubEndpoint, devAuthToken string, adminEmailList []string, adminMode bool, maintenanceMessage string, requestLogger, messageLogger *slog.Logger, globalDir string, pluginMgr *scionplugin.Manager, secretBackend secret.SecretBackend) (*hub.Server, error) {
 	hubCfg := hub.ServerConfig{
 		HubID:                 cfg.Hub.ResolveHubID(),
+		HubName:               cfg.Hub.ResolveHubName(),
 		Port:                  cfg.Hub.Port,
 		Host:                  cfg.Hub.Host,
 		ReadTimeout:           cfg.Hub.ReadTimeout,
