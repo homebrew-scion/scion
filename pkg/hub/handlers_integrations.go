@@ -30,6 +30,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/integrationupdate"
+	"github.com/GoogleCloudPlatform/scion/pkg/eventbus"
 	"github.com/GoogleCloudPlatform/scion/pkg/plugin"
 	"github.com/GoogleCloudPlatform/scion/pkg/store"
 )
@@ -79,6 +80,7 @@ type IntegrationManager interface {
 	BrokerInfo(name string) (version, channelID string, capabilities []string, err error)
 	UpdatePlugin(name string, repoPath string) error
 	InstallPlugin(name, repoPath, pluginsDir, configFile string) error
+	GetBroker(name string) (eventbus.EventBus, error)
 	GetGRPCBrokerAdapter(name string) plugin.GRPCBrokerClient
 }
 
@@ -514,6 +516,11 @@ func (s *Server) handleRestartIntegration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// reconfigureIntegration pushes new config to the running plugin process
+	// (via ReplaceBrokerConfig) without killing it, so the existing spoke's
+	// RPC connection remains valid — no refreshBrokerSpoke needed here.
+	// Contrast with handleUpdateIntegration which rebuilds the binary and
+	// restarts the process, requiring a spoke refresh.
 	if err := s.reconfigureIntegration(r.Context(), mgr, name); err != nil {
 		slog.Error("Failed to restart integration", "plugin", name, "error", err)
 		InternalError(w)
@@ -582,6 +589,8 @@ func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request,
 	if err := s.reconfigureIntegration(r.Context(), mgr, name); err != nil {
 		slog.Warn("Plugin rebuilt but reconfigure failed", "plugin", name, "error", err)
 	}
+
+	s.refreshBrokerSpoke(mgr, name)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -965,6 +974,50 @@ func (s *Server) reconfigureIntegration(ctx context.Context, mgr IntegrationMana
 	}
 
 	return nil
+}
+
+// refreshBrokerSpoke replaces the stale fan-out eventbus spoke for a broker
+// plugin after its process has been restarted (e.g. UpdatePlugin). The old
+// spoke wraps a dead RPC connection; this swaps in a fresh one.
+func (s *Server) refreshBrokerSpoke(mgr IntegrationManager, name string) {
+	proxy := s.GetMessageBrokerProxy()
+	if proxy == nil {
+		return
+	}
+	fanout, ok := proxy.bus.(*eventbus.FanOutEventBus)
+	if !ok {
+		return
+	}
+
+	newBus, err := mgr.GetBroker(name)
+	if err != nil {
+		slog.Error("Failed to get broker for spoke refresh", "plugin", name, "error", err)
+		return
+	}
+
+	var observer bool
+	var channelID string
+	if _, cID, caps, infoErr := mgr.BrokerInfo(name); infoErr == nil {
+		channelID = cID
+		for _, cap := range caps {
+			if strings.EqualFold(cap, "observer") {
+				observer = true
+				break
+			}
+		}
+	}
+
+	spoke := eventbus.NamedEventBus{
+		Name:      name,
+		Bus:       newBus,
+		Observer:  observer,
+		ChannelID: channelID,
+	}
+	if err := fanout.ReplaceSpoke(name, spoke); err != nil {
+		slog.Error("Failed to replace broker spoke", "plugin", name, "error", err)
+	} else {
+		slog.Info("Replaced broker spoke after plugin restart", "plugin", name)
+	}
 }
 
 // requirePostgres is a feature gate for Mode 3 (HA) endpoints that require
