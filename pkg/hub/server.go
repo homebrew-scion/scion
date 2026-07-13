@@ -1906,6 +1906,9 @@ func (s *Server) CreateAuthenticatedDispatcher() *HTTPAgentDispatcher {
 	dispatcher.SetHarnessConfigRepairer(s.syncHarnessConfigFromStorage)
 	dispatcher.SetTemplateRepairer(s.syncTemplateFromStorage)
 
+	// Set image registry so bare image names are rewritten before dispatch
+	dispatcher.SetImageRegistry(s.resolveImageRegistry())
+
 	return dispatcher
 }
 
