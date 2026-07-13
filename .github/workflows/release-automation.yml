@@ -97,18 +97,46 @@ jobs:
       - name: Build and push images (${{ matrix.arch }})
         run: |
           VERSION="${{ needs.detect-release.outputs.new_version }}"
+          REG="ghcr.io/homebrew-scion"
+          TAG="v${VERSION}-${{ matrix.arch }}"
+          PLATFORM="${{ matrix.platform }}"
 
-          # Use --target all in a single invocation so core-base and scion-base
-          # are in the same build run. This lets the orchestrator use the local
-          # builder cache for the core-base→scion-base dependency instead of
-          # pulling from the registry (which can fail with "no match for platform
-          # in manifest" immediately after a fresh push).
+          # Helper: wait for a manifest to be pullable from ghcr.io (up to 3 min).
+          # Needed because ghcr.io manifest propagation can take 30-90s after push,
+          # and the next build step will fail with "no match for platform" if it
+          # pulls before the manifest is available.
+          wait_for_manifest() {
+            local image="$1"
+            echo "Waiting for ${image} to be available in registry..."
+            for i in $(seq 1 18); do
+              if docker manifest inspect "${image}" >/dev/null 2>&1; then
+                echo "  ${image} available after $((i * 10))s"
+                return 0
+              fi
+              sleep 10
+            done
+            echo "  WARNING: ${image} not available after 180s, proceeding anyway"
+          }
+
+          # Stage 1: Build core-base (root image, no dependencies)
           bash image-build/scripts/build-images.sh \
-            --registry ghcr.io/homebrew-scion \
-            --target all \
-            --tag "v${VERSION}-${{ matrix.arch }}" \
-            --platform "${{ matrix.platform }}" \
-            --push
+            --registry "${REG}" --target core-base \
+            --tag "${TAG}" --platform "${PLATFORM}" --push
+          wait_for_manifest "${REG}/core-base:${TAG}"
+
+          # Stage 2: Build scion-base (depends on core-base)
+          bash image-build/scripts/build-images.sh \
+            --registry "${REG}" --target scion-base \
+            --tag "${TAG}" --platform "${PLATFORM}" --push
+          wait_for_manifest "${REG}/scion-base:${TAG}"
+
+          # Stage 3: Build harnesses and hub (all depend on scion-base)
+          bash image-build/scripts/build-images.sh \
+            --registry "${REG}" --target harnesses \
+            --tag "${TAG}" --platform "${PLATFORM}" --push
+          bash image-build/scripts/build-images.sh \
+            --registry "${REG}" --target hub \
+            --tag "${TAG}" --platform "${PLATFORM}" --push
 
   merge-manifests:
     needs: [detect-release, build-images]
