@@ -98,16 +98,14 @@ jobs:
         run: |
           VERSION="${{ needs.detect-release.outputs.new_version }}"
 
+          # Use --target all in a single invocation so core-base and scion-base
+          # are in the same build run. This lets the orchestrator use the local
+          # builder cache for the core-base→scion-base dependency instead of
+          # pulling from the registry (which can fail with "no match for platform
+          # in manifest" immediately after a fresh push).
           bash image-build/scripts/build-images.sh \
             --registry ghcr.io/homebrew-scion \
-            --target core-base \
-            --tag "v${VERSION}-${{ matrix.arch }}" \
-            --platform "${{ matrix.platform }}" \
-            --push
-
-          bash image-build/scripts/build-images.sh \
-            --registry ghcr.io/homebrew-scion \
-            --target common \
+            --target all \
             --tag "v${VERSION}-${{ matrix.arch }}" \
             --platform "${{ matrix.platform }}" \
             --push
