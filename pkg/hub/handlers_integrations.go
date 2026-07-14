@@ -677,12 +677,16 @@ func (s *Server) handleInstallIntegration(w http.ResponseWriter, r *http.Request
 
 	if err := mgr.InstallPlugin(name, repoPath, pluginsDir, configFilePath); err != nil {
 		slog.Error("Failed to install integration", "plugin", name, "error", err)
-		InternalError(w)
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError,
+			"Plugin install failed: "+err.Error(), nil)
 		return
 	}
 
 	if err := s.reconfigureIntegration(r.Context(), mgr, name); err != nil {
 		slog.Warn("Plugin installed but reconfigure failed", "plugin", name, "error", err)
+		writeError(w, http.StatusInternalServerError, ErrCodeInternalError,
+			"Plugin installed but reconfigure failed: "+err.Error(), nil)
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
