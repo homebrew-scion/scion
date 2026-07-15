@@ -328,6 +328,27 @@ func (s *Server) handleGetIntegration(w http.ResponseWriter, r *http.Request, na
 	s.mu.RUnlock()
 
 	if mgr == nil || !mgr.HasPlugin("broker", name) {
+		// Fallback: plugin may be in settings.yaml but not loaded (e.g. bot_token
+		// was missing at startup so LoadOne failed). Return a stub detail so the
+		// UI can show the configuration form instead of an error toast.
+		if globalDir, err := config.GetGlobalDir(); err == nil {
+			if vs, err := config.LoadSingleFileVersioned(globalDir); err == nil {
+				if vs.Server != nil && vs.Server.Plugins != nil {
+					if _, ok := vs.Server.Plugins.Broker[name]; ok {
+						writeJSON(w, http.StatusOK, IntegrationDetail{
+							Name:     name,
+							Platform: resolvePlatform(name),
+							Settings: map[string]string{},
+							Status: &IntegrationStatus{
+								Connected: false,
+								Message:   "Plugin installed — configure required fields to activate",
+							},
+						})
+						return
+					}
+				}
+			}
+		}
 		NotFound(w, "integration")
 		return
 	}
@@ -756,9 +777,27 @@ func (s *Server) handleListAvailableIntegrations(w http.ResponseWriter, _ *http.
 
 	repoPath := s.config.MaintenanceConfig.RepoPath
 
+	// Load settings.yaml once so we can skip plugins that are registered there
+	// (installed but unconfigured — LoadOne failed so they're not in mgr).
+	var settingsBroker map[string]struct{}
+	if globalDir, err := config.GetGlobalDir(); err == nil {
+		if vs, err := config.LoadSingleFileVersioned(globalDir); err == nil {
+			if vs.Server != nil && vs.Server.Plugins != nil {
+				settingsBroker = make(map[string]struct{}, len(vs.Server.Plugins.Broker))
+				for k := range vs.Server.Plugins.Broker {
+					settingsBroker[k] = struct{}{}
+				}
+			}
+		}
+	}
+
 	var available []AvailableIntegration
 	for _, name := range knownPlugins {
 		if mgr != nil && mgr.HasPlugin("broker", name) {
+			continue
+		}
+		// Also skip if registered in settings.yaml (installed but not yet loaded).
+		if _, ok := settingsBroker[name]; ok {
 			continue
 		}
 
