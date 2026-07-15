@@ -222,6 +222,25 @@ def _write_mcp_config(servers: dict[str, Any]) -> None:
     sh.atomic_write_json(config_path, config_data)
 
 
+def _write_model_config(model: str) -> None:
+    """Write the resolved model into ~/.config/opencode/opencode.json."""
+    config_path = sh.expand_path(OPENCODE_CONFIG_FILE)
+    config_data: dict[str, Any] = {}
+    if os.path.isfile(config_path):
+        try:
+            existing = sh.load_json(config_path)
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+        if isinstance(existing, dict):
+            config_data = existing
+
+    if model:
+        config_data["model"] = model
+    else:
+        config_data.pop("model", None)
+    sh.atomic_write_json(config_path, config_data)
+
+
 # ---------------------------------------------------------------------------
 # Main provision logic
 # ---------------------------------------------------------------------------
@@ -262,7 +281,10 @@ def provision(ctx: sh.ProvisionContext) -> None:
 
     sh.apply_mcp_translated(ctx, _translate_mcp_server, _write_mcp_config)
 
-    ctx.info(f"method={resolved.method}")
+    resolved_model = str(ctx.model_resolution.get("resolved_model") or "").strip()
+    _write_model_config(resolved_model)
+
+    ctx.info(f"method={resolved.method}" + (f" model={resolved_model}" if resolved_model else ""))
 
 
 if __name__ == "__main__":
