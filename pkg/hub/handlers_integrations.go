@@ -81,6 +81,7 @@ type IntegrationManager interface {
 	BrokerInfo(name string) (version, channelID string, capabilities []string, err error)
 	UpdatePlugin(name string, repoPath string) error
 	InstallPlugin(name, repoPath, pluginsDir, configFile string) error
+	LoadOne(pluginType, name string, entry plugin.PluginEntry, pluginsDir string) error
 	GetBroker(name string) (eventbus.EventBus, error)
 	GetGRPCBrokerAdapter(name string) plugin.GRPCBrokerClient
 }
@@ -697,6 +698,14 @@ func (s *Server) handleInstallIntegration(w http.ResponseWriter, r *http.Request
 		// Binary is already on PATH (Homebrew/package-manager install).
 		// Config file and settings.yaml were written above — no build needed.
 		slog.Info("Plugin binary found on PATH, skipping build", "plugin", name, "binary", binaryName)
+
+		binaryPath, _ := exec.LookPath(binaryName)
+		if err := mgr.LoadOne(plugin.PluginTypeBroker, name, plugin.PluginEntry{Path: binaryPath, ConfigFile: configFilePath}, pluginsDir); err != nil {
+			slog.Error("Failed to load plugin from PATH binary", "plugin", name, "error", err)
+			writeError(w, http.StatusInternalServerError, ErrCodeInternalError,
+				"Plugin found on PATH but failed to load — check server logs", nil)
+			return
+		}
 	}
 
 	if err := s.reconfigureIntegration(r.Context(), mgr, name); err != nil {
