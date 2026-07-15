@@ -274,11 +274,13 @@ func (s *Server) handleListIntegrations(w http.ResponseWriter, r *http.Request) 
 
 	plugins := mgr.ListPlugins()
 	summaries := make([]IntegrationSummary, 0, len(plugins))
+	seen := make(map[string]bool, len(plugins))
 	for _, key := range plugins {
 		name := pluginNameFromKey(key)
 		if name == "" {
 			continue
 		}
+		seen[name] = true
 
 		summary := IntegrationSummary{
 			Name:           name,
@@ -289,6 +291,32 @@ func (s *Server) handleListIntegrations(w http.ResponseWriter, r *http.Request) 
 			Status:         getIntegrationStatus(mgr, name),
 		}
 		summaries = append(summaries, summary)
+	}
+
+	// Union-merge installed-but-unconfigured plugins from settings.yaml.
+	// When LoadOne fails (e.g. bot_token missing at first install), the plugin
+	// is never in mgr.clients and won't appear above — but it IS in
+	// settings.yaml and should still be listed so the user can configure it.
+	globalDir, err := config.GetGlobalDir()
+	if err == nil {
+		if vs, err := config.LoadSingleFileVersioned(globalDir); err == nil {
+			if vs.Server != nil && vs.Server.Plugins != nil {
+				for name := range vs.Server.Plugins.Broker {
+					if seen[name] {
+						continue
+					}
+					summaries = append(summaries, IntegrationSummary{
+						Name:     name,
+						Platform: resolvePlatform(name),
+						Status: &IntegrationStatus{
+							Connected: false,
+							Message:   "Plugin installed — configure bot_token to activate",
+						},
+						HasSecrets: s.checkIntegrationSecrets(r.Context(), name),
+					})
+				}
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, summaries)
