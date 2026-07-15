@@ -701,10 +701,12 @@ func (s *Server) handleInstallIntegration(w http.ResponseWriter, r *http.Request
 
 		binaryPath, _ := exec.LookPath(binaryName)
 		if err := mgr.LoadOne(plugin.PluginTypeBroker, name, plugin.PluginEntry{Path: binaryPath, ConfigFile: configFilePath}, pluginsDir); err != nil {
-			slog.Error("Failed to load plugin from PATH binary", "plugin", name, "error", err)
-			writeError(w, http.StatusInternalServerError, ErrCodeInternalError,
-				"Plugin found on PATH but failed to load — check server logs", nil)
-			return
+			// LoadOne failing due to missing required config (e.g. bot_token) is
+			// expected on first install — the plugin is installed but not yet
+			// configured. Log a warning and continue; the operator must configure
+			// the plugin via the admin UI before it becomes active.
+			slog.Warn("Plugin installed but not yet configured (LoadOne failed, likely missing required fields)",
+				"plugin", name, "error", err)
 		}
 	}
 
