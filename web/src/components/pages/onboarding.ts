@@ -1091,7 +1091,7 @@ export class ScionPageOnboarding extends LitElement {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            server: { auto_inject_gcloud_adc: this.autoInjectGcloudADC },
+            auto_inject_gcloud_adc: this.autoInjectGcloudADC,
           }),
         });
       }

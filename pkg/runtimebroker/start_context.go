@@ -519,7 +519,7 @@ func (s *Server) buildStartContext(ctx context.Context, in startContextInputs) (
 	if isColocated {
 		if adcGlobalDir, gErr := config.GetGlobalDir(); gErr == nil {
 			if vs, loadErr := config.LoadSingleFileVersioned(adcGlobalDir); loadErr == nil &&
-				vs != nil && vs.Server != nil && vs.Server.AutoInjectGcloudADC {
+				vs != nil && vs.AutoInjectGcloudADC {
 				home, _ := os.UserHomeDir()
 				adcPath := filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
 				if data, err := os.ReadFile(adcPath); err == nil {

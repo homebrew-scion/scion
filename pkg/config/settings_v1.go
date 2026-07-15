@@ -251,6 +251,11 @@ type VersionedSettings struct {
 	DefaultMaxModelCalls int               `json:"default_max_model_calls,omitempty" yaml:"default_max_model_calls,omitempty" koanf:"default_max_model_calls"`
 	DefaultMaxDuration   string            `json:"default_max_duration,omitempty" yaml:"default_max_duration,omitempty" koanf:"default_max_duration"`
 	DefaultResources     *api.ResourceSpec `json:"default_resources,omitempty" yaml:"default_resources,omitempty" koanf:"default_resources"`
+
+	// AutoInjectGcloudADC controls whether the host's gcloud Application Default
+	// Credentials file is automatically injected into agent containers in
+	// co-located (workstation) mode.
+	AutoInjectGcloudADC bool `json:"auto_inject_gcloud_adc,omitempty" yaml:"auto_inject_gcloud_adc,omitempty" koanf:"auto_inject_gcloud_adc"`
 }
 
 // V1ServerConfig holds server-side configuration in the versioned settings format.
@@ -289,10 +294,6 @@ type V1ServerConfig struct {
 	// GitHubApp configures the Hub's GitHub App integration for agent git authentication.
 	GitHubApp *V1GitHubAppConfig `json:"github_app,omitempty" yaml:"github_app,omitempty" koanf:"github_app"`
 
-	// AutoInjectGcloudADC controls whether the host's gcloud Application Default
-	// Credentials file is automatically injected into agent containers in
-	// co-located (workstation) mode.
-	AutoInjectGcloudADC bool `json:"auto_inject_gcloud_adc,omitempty" yaml:"auto_inject_gcloud_adc,omitempty" koanf:"auto_inject_gcloud_adc"`
 }
 
 // V1GitHubAppConfig holds the GitHub App configuration in settings.yaml format.

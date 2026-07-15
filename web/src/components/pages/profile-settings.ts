@@ -24,6 +24,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
+import { apiFetch } from '../../client/api.js';
 import '../shared/subscription-manager.js';
 
 const STORAGE_KEY = 'scion-push-notifications';
@@ -35,6 +36,12 @@ export class ScionPageProfileSettings extends LitElement {
 
   @state()
   private _permissionState: NotificationPermission | 'unsupported' = 'default';
+
+  @state()
+  private _gcloudADCAvailable = false;
+
+  @state()
+  private _autoInjectGcloudADC = false;
 
   static override styles = css`
     :host {
@@ -158,6 +165,23 @@ export class ScionPageProfileSettings extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this._initNotificationState();
+    void this._loadSystemStatus();
+  }
+
+  private async _loadSystemStatus(): Promise<void> {
+    try {
+      const res = await apiFetch('/api/v1/system/status');
+      if (res.ok) {
+        const data = (await res.json()) as {
+          gcloudADCAvailable?: boolean;
+          autoInjectGcloudADC?: boolean;
+        };
+        this._gcloudADCAvailable = data.gcloudADCAvailable ?? false;
+        this._autoInjectGcloudADC = data.autoInjectGcloudADC ?? false;
+      }
+    } catch {
+      // Non-critical — leave defaults
+    }
   }
 
   private _initNotificationState(): void {
@@ -197,6 +221,23 @@ export class ScionPageProfileSettings extends LitElement {
     } else {
       target.checked = false;
       this._pushEnabled = false;
+    }
+  }
+
+  private async _handleADCToggle(e: Event): Promise<void> {
+    const target = e.target as HTMLInputElement & { checked: boolean };
+    const enabled = target.checked;
+    this._autoInjectGcloudADC = enabled;
+    try {
+      await apiFetch('/api/v1/system/workstation-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_inject_gcloud_adc: enabled }),
+      });
+    } catch {
+      // Revert on failure
+      this._autoInjectGcloudADC = !enabled;
+      target.checked = !enabled;
     }
   }
 
@@ -271,6 +312,31 @@ export class ScionPageProfileSettings extends LitElement {
 
         ${this._renderPermissionStatus()}
       </div>
+
+      ${this._gcloudADCAvailable ? html`
+        <div class="settings-card">
+          <h2 class="section-title">
+            <sl-icon name="cloud"></sl-icon>
+            GCP Credentials
+          </h2>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <p class="setting-label">Automatically inject gcloud credentials into agent containers</p>
+              <p class="setting-description">
+                When enabled, agents launched in workstation mode will have access to
+                your local gcloud Application Default Credentials.
+              </p>
+            </div>
+            <div class="setting-control">
+              <sl-switch
+                ?checked=${this._autoInjectGcloudADC}
+                @sl-change=${this._handleADCToggle}
+              ></sl-switch>
+            </div>
+          </div>
+        </div>
+      ` : nothing}
 
       <scion-subscription-manager compact></scion-subscription-manager>
     `;
