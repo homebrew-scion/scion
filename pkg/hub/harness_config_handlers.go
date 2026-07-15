@@ -1228,6 +1228,11 @@ func (s *Server) handleHarnessConfigImageStatus(w http.ResponseWriter, r *http.R
 	}
 	wg.Wait()
 
+	if len(nodeBound) == 0 && s.imageManager != nil {
+		entry := s.buildLocalImageEntry(ctx, shortImage, longImage, registryStatus)
+		brokerEntries = append(brokerEntries, entry)
+	}
+
 	resp := AggregatedImageStatusResponse{
 		Image:        image,
 		Registry:     &registryStatus,
