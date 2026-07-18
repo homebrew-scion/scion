@@ -622,7 +622,7 @@ func (b *TelegramBrokerV2) Publish(ctx context.Context, topic string, msg *messa
 
 	// Priority 2: Look up via ConversationContext for the recipient.
 	if len(chatIDs) == 0 && msg != nil && msg.Recipient != "" && store != nil {
-		chatIDs = b.resolveRecipientChats(ctx, msg.Recipient, projectID, agentSlug)
+		chatIDs = b.resolveRecipientChats(ctx, msg.Recipient, msg.RecipientID, projectID, agentSlug)
 	}
 
 	// Priority 3: Broadcast to all GroupLinks for the project.
@@ -886,7 +886,10 @@ func resolveOutboundMentions(ctx context.Context, store Store, text string) stri
 }
 
 // resolveRecipientChats looks up target chats for a specific recipient.
-func (b *TelegramBrokerV2) resolveRecipientChats(ctx context.Context, recipient, projectID, agentSlug string) []int64 {
+// It first attempts email-based lookup via GetUserMappingByEmail; if that fails
+// (e.g. because the hub rewrote the recipient to a display name), it falls back
+// to looking up the scion user UUID via GetUserMappingByScionUserID.
+func (b *TelegramBrokerV2) resolveRecipientChats(ctx context.Context, recipient, recipientID, projectID, agentSlug string) []int64 {
 	// Extract email from "user:email@example.com" format.
 	email := strings.TrimPrefix(recipient, "user:")
 	if email == recipient {
@@ -894,6 +897,22 @@ func (b *TelegramBrokerV2) resolveRecipientChats(ctx context.Context, recipient,
 	}
 
 	mapping, err := b.store.GetUserMappingByEmail(ctx, email)
+	if err != nil {
+		b.log.Error("Failed to look up user mapping by email", "email", email, "error", err)
+	}
+
+	// Fallback: try scion user ID lookup (handles display-name recipients).
+	if (err != nil || mapping == nil) && recipientID != "" {
+		var fallbackErr error
+		mapping, fallbackErr = b.store.GetUserMappingByScionUserID(ctx, recipientID)
+		if fallbackErr != nil {
+			b.log.Error("Failed to look up user mapping by scion user ID", "recipientID", recipientID, "error", fallbackErr)
+			err = fallbackErr
+		} else {
+			err = nil
+		}
+	}
+
 	if err != nil || mapping == nil {
 		return nil
 	}
