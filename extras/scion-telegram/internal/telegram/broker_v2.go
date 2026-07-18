@@ -84,6 +84,7 @@ type TelegramBrokerV2 struct {
 
 	agentCacheTTL  time.Duration
 	projectSlugMap map[string]string // injected by hub: projectID → slug
+	downloadsPath  string            // override for file download directory; empty = default
 
 	// Webhook mode fields.
 	inboundMode   string // "poll" (default) or "webhook"
@@ -170,6 +171,11 @@ func (b *TelegramBrokerV2) Configure(config map[string]string) error {
 			return fmt.Errorf("invalid agent_cache_ttl: %w", err)
 		}
 		b.agentCacheTTL = d
+	}
+
+	// Parse optional downloads directory override.
+	if v, ok := config["downloads_path"]; ok && v != "" {
+		b.downloadsPath = v
 	}
 
 	// Initialize store: Postgres if database_url is set, otherwise SQLite.
@@ -1285,7 +1291,7 @@ func (b *TelegramBrokerV2) publishAttachment(ctx context.Context, api *TelegramA
 	}
 	defer f.Close()
 
-	filename := filepath.Base(attachPath)
+	filename := filepath.Base(strings.ReplaceAll(attachPath, "\\", "/"))
 	if name, ok := msg.Metadata["telegram_attachment_name"]; ok && name != "" {
 		filename = name
 	}
@@ -1581,11 +1587,23 @@ func (b *TelegramBrokerV2) getUpdatesV2(ctx context.Context, offset int64, timeo
 // --- Inbound message handling ---
 
 func (b *TelegramBrokerV2) handleIncomingMessageV2(tgMsg *TGMessage) {
-	if tgMsg.Text == "" && tgMsg.Caption == "" && tgMsg.Photo == nil && tgMsg.Document == nil {
+	if tgMsg == nil {
+		return
+	}
+	hasAttachment := tgMsg.Photo != nil || tgMsg.Document != nil || tgMsg.Audio != nil || tgMsg.Video != nil
+	hasSkippedAttachment := tgMsg.Sticker != nil || tgMsg.Animation != nil
+
+	if tgMsg.Text == "" && tgMsg.Caption == "" && !hasAttachment {
+		if hasSkippedAttachment {
+			b.log.Debug("Skipping unsupported attachment type (sticker/animation)",
+				"message_id", tgMsg.MessageID,
+				"has_sticker", tgMsg.Sticker != nil,
+				"has_animation", tgMsg.Animation != nil)
+		}
 		return
 	}
 
-	// Use caption as text fallback for photo/document messages.
+	// Use caption as text fallback for photo/document/audio/video messages.
 	if tgMsg.Text == "" && tgMsg.Caption != "" {
 		tgMsg.Text = tgMsg.Caption
 	}
@@ -1743,7 +1761,7 @@ func (b *TelegramBrokerV2) handleGroupMessage(tgMsg *TGMessage) {
 	// later (offset>0) do not block default routing; resolveUserMentions
 	// injects the resolved scion identity for those.
 	if len(targets) == 0 && effectiveDefault != "" {
-		hasAttachment := tgMsg.Photo != nil || tgMsg.Document != nil
+		hasAttachment := tgMsg.Photo != nil || tgMsg.Document != nil || tgMsg.Audio != nil || tgMsg.Video != nil
 		text := strings.TrimSpace(tgMsg.Text)
 		textRoutes := text != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") && !hasNonBotUserMention(tgMsg, botUsername, agents)
 		if textRoutes || hasAttachment {
@@ -1832,9 +1850,9 @@ func (b *TelegramBrokerV2) handleGroupMessage(tgMsg *TGMessage) {
 	cleanText := stripMentions(resolvedText, botUsername, targets)
 	cleanText = strings.TrimSpace(cleanText)
 
-	// Download file attachments (photos/documents).
+	// Download file attachments (photos/documents/audio/video).
 	var attachmentPath, placeholder string
-	if tgMsg.Photo != nil || tgMsg.Document != nil {
+	if tgMsg.Photo != nil || tgMsg.Document != nil || tgMsg.Audio != nil || tgMsg.Video != nil {
 		var err error
 		attachmentPath, placeholder, err = b.downloadTelegramFile(ctx, tgMsg, link.ProjectSlug)
 		if err != nil {
@@ -1953,9 +1971,9 @@ func (b *TelegramBrokerV2) handleGroupMessage(tgMsg *TGMessage) {
 
 const maxTelegramFileSize = 20 * 1024 * 1024 // 20 MB
 
-// downloadTelegramFile downloads a photo or document from a Telegram message
-// and saves it to the agent's workspace downloads directory. Returns the
-// agent-relative path and a placeholder string for the message body.
+// downloadTelegramFile downloads a photo, document, audio, or video from a
+// Telegram message and saves it to the configured downloads directory.
+// Returns the agent-relative path and a placeholder string for the message body.
 func (b *TelegramBrokerV2) downloadTelegramFile(ctx context.Context, tgMsg *TGMessage, projectSlug string) (agentPath, placeholder string, err error) {
 	var fileID, fileName, fileType string
 	var fileSize int64
@@ -1975,8 +1993,38 @@ func (b *TelegramBrokerV2) downloadTelegramFile(ctx context.Context, tgMsg *TGMe
 		fileSize = largest.FileSize
 		fileName = fmt.Sprintf("photo_%s.jpg", largest.FileUniqueID)
 		fileType = "Photo"
+	case tgMsg.Audio != nil:
+		fileID = tgMsg.Audio.FileID
+		fileSize = tgMsg.Audio.FileSize
+		fileName = tgMsg.Audio.FileName
+		if fileName == "" {
+			// Build a descriptive name from title/performer if available.
+			if tgMsg.Audio.Title != "" {
+				fileName = tgMsg.Audio.Title + ".ogg"
+			} else {
+				fileName = fmt.Sprintf("audio_%s.ogg", tgMsg.Audio.FileUniqueID)
+			}
+		}
+		fileType = "Audio"
+	case tgMsg.Video != nil:
+		fileID = tgMsg.Video.FileID
+		fileSize = tgMsg.Video.FileSize
+		fileName = tgMsg.Video.FileName
+		if fileName == "" {
+			fileName = fmt.Sprintf("video_%s.mp4", tgMsg.Video.FileUniqueID)
+		}
+		fileType = "Video"
 	default:
-		return "", "", fmt.Errorf("message has no photo or document")
+		return "", "", fmt.Errorf("message has no downloadable attachment")
+	}
+
+	// Sanitize the filename to prevent path traversal via user-controlled
+	// fields (e.g. Document.FileName, Audio.Title). Replacing backslashes
+	// with forward slashes first ensures that both Windows and Unix path
+	// separators are stripped regardless of the host OS.
+	fileName = filepath.Base(strings.ReplaceAll(fileName, "\\", "/"))
+	if fileName == "." || fileName == "" {
+		fileName = fmt.Sprintf("file_%s", fileID)
 	}
 
 	if fileSize > maxTelegramFileSize {
@@ -1997,7 +2045,13 @@ func (b *TelegramBrokerV2) downloadTelegramFile(ctx context.Context, tgMsg *TGMe
 	timestamp := time.Now().Unix()
 	destName := fmt.Sprintf("tg_%d_%s", timestamp, fileName)
 
-	hostDir := filepath.Join("/home/scion/.scion/projects", projectSlug, "downloads")
+	// Use configured downloads_path if set; otherwise default to project dir.
+	var hostDir string
+	if b.downloadsPath != "" {
+		hostDir = b.downloadsPath
+	} else {
+		hostDir = filepath.Join("/home/scion/.scion/projects", projectSlug, "downloads")
+	}
 	if err := os.MkdirAll(hostDir, 0o755); err != nil {
 		return "", "", fmt.Errorf("create downloads dir: %w", err)
 	}
@@ -2014,7 +2068,15 @@ func (b *TelegramBrokerV2) downloadTelegramFile(ctx context.Context, tgMsg *TGMe
 		return "", "", fmt.Errorf("write file: %w", err)
 	}
 
-	agentPath = filepath.Join("/workspace/downloads", destName)
+	// Derive the agent-visible path from the same base used to save the file.
+	// When a custom downloads_path is configured, the agent sees that path
+	// directly; otherwise it sees the conventional /workspace/downloads mount.
+	if b.downloadsPath != "" {
+		agentPath = filepath.Join(b.downloadsPath, destName)
+	} else {
+		agentPath = filepath.Join("/workspace/downloads", destName)
+	}
+	agentPath = filepath.ToSlash(agentPath)
 	placeholder = fmt.Sprintf("📎 [%s attached: %s]", fileType, fileName)
 
 	b.log.Info("Downloaded telegram file",
