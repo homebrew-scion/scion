@@ -40,6 +40,8 @@ import (
 	scionrt "github.com/GoogleCloudPlatform/scion/pkg/runtime"
 	"github.com/GoogleCloudPlatform/scion/pkg/storage"
 	"github.com/GoogleCloudPlatform/scion/pkg/templatecache"
+	"github.com/GoogleCloudPlatform/scion/pkg/transportauth"
+	"github.com/GoogleCloudPlatform/scion/pkg/transportauth/adcsource"
 	"github.com/GoogleCloudPlatform/scion/pkg/util"
 	"github.com/GoogleCloudPlatform/scion/pkg/util/logging"
 )
@@ -521,6 +523,21 @@ func (s *Server) createHubConnection(name string, creds *brokercredentials.Broke
 
 	// Build hub client options
 	opts := buildHubClientOpts(creds, secretKey)
+
+	// Resolve transport auth once and share between REST client and control channel
+	var transportSrc transportauth.TokenSource
+	var transportMode transportauth.HeaderMode
+	src, mode, err := transportauth.ResolveBrokerTransport(creds.TransportMode, creds.TransportAudience, adcsource.New)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve transport auth: %w", err)
+	}
+	if src != nil {
+		transportSrc = src
+		transportMode = mode
+		opts = append(opts, hubclient.WithTransportAuth(src, mode))
+		slog.Info("Hub connection using transport auth", "name", name, "mode", creds.TransportMode)
+	}
+
 	client, err := hubclient.New(hubEndpoint, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Hub client: %w", err)
@@ -537,16 +554,18 @@ func (s *Server) createHubConnection(name string, creds *brokercredentials.Broke
 	}
 
 	conn := &HubConnection{
-		Name:        name,
-		HubEndpoint: hubEndpoint,
-		BrokerID:    creds.BrokerID,
-		AuthMode:    creds.AuthMode,
-		Credentials: creds,
-		SecretKey:   secretKey,
-		HubClient:   client,
-		Hydrator:    hydrator,
-		HCResolver:  hcResolver,
-		Status:      ConnectionStatusDisconnected,
+		Name:            name,
+		HubEndpoint:     hubEndpoint,
+		BrokerID:        creds.BrokerID,
+		AuthMode:        creds.AuthMode,
+		Credentials:     creds,
+		SecretKey:       secretKey,
+		TransportSource: transportSrc,
+		TransportMode:   transportMode,
+		HubClient:       client,
+		Hydrator:        hydrator,
+		HCResolver:      hcResolver,
+		Status:          ConnectionStatusDisconnected,
 	}
 
 	return conn, nil
@@ -565,6 +584,15 @@ func (s *Server) createHubConnectionFromConfig() (*HubConnection, error) {
 		slog.Info("Hub client using auto dev authentication")
 	}
 
+	// Resolve transport auth once from env and share between REST client and control channel
+	var transportSrc transportauth.TokenSource
+	var transportMode transportauth.HeaderMode
+	if src, err := transportauth.FromEnv(); src != nil && err == nil {
+		transportSrc = src
+		transportMode = transportauth.ModeFromEnv()
+		opts = append(opts, hubclient.WithTransportAuth(src, transportMode))
+	}
+
 	client, err := hubclient.New(s.config.HubEndpoint, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Hub client: %w", err)
@@ -580,13 +608,15 @@ func (s *Server) createHubConnectionFromConfig() (*HubConnection, error) {
 	}
 
 	conn := &HubConnection{
-		Name:        "default",
-		HubEndpoint: s.config.HubEndpoint,
-		BrokerID:    s.config.BrokerID,
-		HubClient:   client,
-		Hydrator:    hydrator,
-		HCResolver:  hcResolver,
-		Status:      ConnectionStatusDisconnected,
+		Name:            "default",
+		HubEndpoint:     s.config.HubEndpoint,
+		BrokerID:        s.config.BrokerID,
+		TransportSource: transportSrc,
+		TransportMode:   transportMode,
+		HubClient:       client,
+		Hydrator:        hydrator,
+		HCResolver:      hcResolver,
+		Status:          ConnectionStatusDisconnected,
 	}
 
 	return conn, nil

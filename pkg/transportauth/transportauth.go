@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -119,10 +120,10 @@ func ParseTokenExpiry(tokenString string) (time.Time, error) {
 	return time.Unix(claims.Exp, 0), nil
 }
 
-// ModeFromEnv reads SCION_TRANSPORT_MODE and returns the corresponding
-// HeaderMode. Returns HeaderAuthorization when unset or unrecognised.
-func ModeFromEnv() HeaderMode {
-	switch os.Getenv(EnvTransportMode) {
+// ModeFromString converts a transport mode string to a HeaderMode constant.
+// Returns HeaderAuthorization for empty or unrecognised values.
+func ModeFromString(mode string) HeaderMode {
+	switch mode {
 	case "iap":
 		return HeaderProxyAuthorization
 	case "cloudrun_invoker":
@@ -130,6 +131,12 @@ func ModeFromEnv() HeaderMode {
 	default:
 		return HeaderAuthorization
 	}
+}
+
+// ModeFromEnv reads SCION_TRANSPORT_MODE and returns the corresponding
+// HeaderMode. Returns HeaderAuthorization when unset or unrecognised.
+func ModeFromEnv() HeaderMode {
+	return ModeFromString(os.Getenv(EnvTransportMode))
 }
 
 // FromEnv resolves a TokenSource from environment variables. Returns
@@ -168,6 +175,61 @@ func FromEnv() (TokenSource, error) {
 	}
 
 	return NewMetadataSource(audience), nil
+}
+
+// TransportSettings holds transport auth settings read from settings.yaml.
+type TransportSettings struct {
+	Mode     string
+	Audience string
+}
+
+// FromSettings resolves a TokenSource from settings when env vars are absent.
+// The adcNew constructor is optional — when nil, ADC-backed sources are not
+// available (keeping the sciontool binary lean).
+//
+// Resolution order:
+//  1. SCION_TRANSPORT_TOKEN set → InjectedSource (env always wins)
+//  2. On GCE && SCION_METADATA_MODE unset && audience available → MetadataSource
+//  3. Settings audience + adcNew → ADCSource
+//  4. Otherwise → nil
+func FromSettings(settings *TransportSettings, adcNew ADCSourceConstructor) (TokenSource, HeaderMode, error) {
+	// Env vars always take precedence.
+	src, err := FromEnv()
+	if err != nil {
+		return nil, HeaderAuthorization, err
+	}
+	if src != nil {
+		return src, ModeFromEnv(), nil
+	}
+
+	// Check settings when env vars produced nothing.
+	if settings == nil || settings.Audience == "" {
+		return nil, HeaderAuthorization, nil
+	}
+
+	// Env-var mode takes precedence over settings mode.
+	mode := ModeFromEnv()
+	if envMode := os.Getenv(EnvTransportMode); envMode == "" && settings.Mode != "" {
+		mode = ModeFromString(settings.Mode)
+	}
+
+	// Try metadata server first when on GCE.
+	if IsOnGCEFunc() {
+		if metaMode := os.Getenv(EnvMetadataMode); metaMode == "" {
+			return NewMetadataSource(settings.Audience), mode, nil
+		}
+	}
+
+	// Fall back to ADC.
+	if adcNew != nil {
+		adcSrc, err := adcNew(settings.Audience)
+		if err != nil {
+			return nil, HeaderAuthorization, err
+		}
+		return adcSrc, mode, nil
+	}
+
+	return nil, HeaderAuthorization, nil
 }
 
 // Wrap returns rt wrapped so that each outgoing request carries the
