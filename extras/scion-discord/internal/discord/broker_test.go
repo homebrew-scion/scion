@@ -702,3 +702,53 @@ func TestResolveOutboundMentions(t *testing.T) {
 		assert.Equal(t, "ptone@google.com", got)
 	})
 }
+
+// ---------------------------------------------------------------------------
+// senderSlug derivation — uses shared deriveSenderSlug from format.go
+// ---------------------------------------------------------------------------
+
+func TestDeriveSenderSlug(t *testing.T) {
+	tests := []struct {
+		name      string
+		sender    string
+		agentSlug string
+		want      string
+	}{
+		{
+			name:      "sender is agent — uses sender slug",
+			sender:    "agent:builder",
+			agentSlug: "reviewer",
+			want:      "builder",
+		},
+		{
+			name:      "sender is not agent — falls back to agentSlug",
+			sender:    "user:alice@example.com",
+			agentSlug: "coder",
+			want:      "coder",
+		},
+		{
+			name:      "sender is agent and agentSlug is empty",
+			sender:    "agent:deployer",
+			agentSlug: "",
+			want:      "deployer",
+		},
+		{
+			name:      "sender is not agent and agentSlug is empty",
+			sender:    "user:bob@example.com",
+			agentSlug: "",
+			want:      "",
+		},
+		{
+			name:      "observe mode — sender differs from topic agent",
+			sender:    "agent:agent-b",
+			agentSlug: "agent-a",
+			want:      "agent-b",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveSenderSlug(tt.sender, tt.agentSlug)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
