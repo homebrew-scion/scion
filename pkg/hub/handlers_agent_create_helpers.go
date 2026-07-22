@@ -144,10 +144,15 @@ func (s *Server) populateAgentConfig(ctx context.Context, agent *store.Agent, pr
 	}
 
 	// Populate workspace path for hub-managed projects and shared-workspace git projects.
+	// When the user provided a relative workspace (project subdirectory), preserve it
+	// verbatim -- the broker will resolve it against its own project root.
 	if project != nil && (project.GitRemote == "" || project.IsSharedWorkspace()) {
-		workspacePath, err := hubManagedProjectPath(project.Slug)
-		if err == nil {
-			agent.AppliedConfig.Workspace = workspacePath
+		existingWorkspace := agent.AppliedConfig.Workspace
+		if existingWorkspace == "" {
+			workspacePath, err := hubManagedProjectPath(project.Slug)
+			if err == nil {
+				agent.AppliedConfig.Workspace = workspacePath
+			}
 		}
 	}
 
